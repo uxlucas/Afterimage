@@ -1,0 +1,35 @@
+{
+  "name": "afterimage-cli",
+  "version": "0.1.0",
+  "description": "A version-history viewer for prototypes.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "afterimage": "bin/afterimage.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin",
+    "src/cli",
+    "src/engine/manifest.js",
+    "src/runtime",
+    "viewer-dist",
+    "agents",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:viewer": "node scripts/build-viewer.mjs",
+    "prepack": "npm run build:viewer",
+    "test": "node --test \"tests/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.2",
+    "motion": "14.9.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "vite": "8.3.5"
+  }
+}

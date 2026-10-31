@@ -1,0 +1,382 @@
+/* The pill: a small dark tool floating over the prototype, bottom centre. */
+
+/* The dock holds the pill and the panel above it. With the panel open it sits in the bottom-right corner;
+   the body slides between the two places as a layout animation. */
+.pill-dock {
+  position: fixed;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.pill-dock[data-open]:not([data-phone]) { justify-content: flex-end; }
+.pill-dock[data-phone] { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); padding: 0 6px; }
+.dock-body { position: relative; display: flex; justify-content: center; max-width: 100%; pointer-events: none; }
+.pill-dock[data-phone] .dock-body { width: 100%; }
+
+.pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 5px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px #0000004d, 0 10px 28px #00000040;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pill-seg { position: relative; display: flex; align-items: center; height: 34px; border-radius: 999px; }
+.pill-sep { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--hairline); }
+.pill .muted { color: var(--muted); }
+.pill-icon { flex: none; display: block; }
+
+/* Buttons: every control is 34px tall, so the hit area is the segment, not the text. */
+.pill-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 150ms ease, color 150ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.pill-btn:disabled { cursor: default; }
+.pill-btn:active:not(:disabled) { transform: scale(0.97); }
+.pill-btn:focus-visible, .pill-step:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+@media (hover: hover) {
+  .pill-btn:hover:not(:disabled) { background: var(--raised); }
+}
+
+/* Version */
+.version-seg { gap: 2px; }
+.version-btn { padding: 0 8px 0 12px; }
+.pill-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--muted);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+.pill-dot[data-latest] { background: var(--green); box-shadow: inset 0 0 0 1.5px var(--green); }
+.pill-dock[data-phone] .version-btn { padding: 0 12px; }
+
+.version-field-wrap { display: inline-flex; }
+.version-field {
+  height: 24px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  background: #ffffff0d;
+  color: var(--text);
+  caret-color: var(--text);
+  font-size: 12px;
+  text-align: center;
+  cursor: text;
+  transition: background-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+}
+.version-field::selection { background: #ededed40; }
+@media (hover: hover) {
+  .version-field:hover { background: var(--raised); }
+}
+.version-field:focus { background: #0f0f0f; box-shadow: inset 0 0 0 1px #ffffff40; }
+.version-field[data-invalid] { background: #0f0f0f; box-shadow: inset 0 0 0 1px #e0705fb3; color: var(--red); }
+.version-field[data-invalid]::selection { background: #e0705f40; }
+
+.version-of { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px 0 6px; color: var(--muted); cursor: text; }
+.version-of .num { font-size: 12px; }
+
+.pill-hint {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 13px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px var(--hairline), 0 6px 18px #00000040;
+  pointer-events: none;
+}
+.pill-hint[data-error] { color: var(--text); }
+.pill-hint kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font: 12px/1 var(--font-mono);
+}
+.pill-hint kbd + kbd { margin-left: -2px; }
+
+/* Tick strip */
+.tick-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  min-width: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: none;
+}
+.tick-strip[data-dragging] { cursor: grabbing; }
+.tick-strip:has(.tick-input:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+.tick-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tick-track { position: relative; display: flex; gap: 3px; align-items: flex-end; height: 14px; }
+.tick-track[data-fade='start'] { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px); mask-image: linear-gradient(90deg, transparent, #000 18px); }
+.tick-track[data-fade='end'] { -webkit-mask-image: linear-gradient(270deg, transparent, #000 18px); mask-image: linear-gradient(270deg, transparent, #000 18px); }
+.tick-track[data-fade='both'] {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.tick-slot { flex: none; display: block; width: 2px; height: 14px; }
+.tick {
+  display: block;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: #ffffff38;
+  transform: scaleY(0.643); /* 9px of 14 */
+  transform-origin: 50% 100%;
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), background-color 140ms ease;
+}
+.tick[data-hover] { background: #ffffff80; transform: scaleY(0.857); }
+.tick[data-role='range'] { background: #ffffff80; }
+/* The baseline: a hollow tick, a little wider than the others so the hole reads. */
+.tick[data-role='base'] { width: 4px; margin-left: -1px; background: transparent; box-shadow: inset 0 0 0 1px var(--text); transform: scaleY(1); }
+.tick-strip[data-range] .tick[data-role='base'] { cursor: grab; }
+.tick-strip[data-dragging] .tick[data-role='base'] { cursor: grabbing; }
+.tick[data-role='selected'] { background: var(--text); transform: scaleY(1); }
+
+.tick-tip-anchor { position: absolute; left: 10px; bottom: calc(100% + 13px); pointer-events: none; }
+.tick-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 1px var(--hairline), 0 6px 18px #00000040;
+}
+.tick-tip .num { color: var(--muted); }
+.tick-tip-sep { color: var(--faint); }
+.tick-tip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+
+/* Highlight */
+.highlight-seg { overflow: hidden; background-color: transparent; transition: background-color 150ms ease; }
+.highlight-seg[data-on] { background-color: var(--raised); }
+.auto-width-inner { position: relative; display: flex; align-items: center; width: max-content; height: 34px; }
+.seg-content { display: flex; align-items: center; height: 34px; }
+
+.pill-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e5a83b26;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1;
+}
+.pill-count[data-zero] { background: #ffffff10; color: var(--muted); }
+.pill-dock[data-phone] .highlight-btn { gap: 6px; }
+
+.highlight-seg[data-on] .pill-btn:hover:not(:disabled) { background: #ffffff0a; }
+.stepper-label { padding: 0 8px 0 12px; }
+.stepper-label .pill-icon { color: var(--amber); }
+.stepper-text { display: inline-flex; align-items: baseline; gap: 5px; }
+.stepper-n { color: var(--amber); text-align: right; font-size: 12px; }
+.stepper-n[data-empty] { color: var(--faint); }
+.stepper-total { font-size: 12px; }
+/* The filter in force, when it isn't All (Ruling 26): the word on desktop, a dot in the outlines' colour on a phone. */
+.stepper-filter-dot { width: 6px; height: 6px; border-radius: 50%; align-self: center; background: var(--amber); }
+.stepper-filter-dot[data-kind='added'] { background: var(--green); }
+.stepper-filter-dot[data-kind='removed'] { background: var(--red); }
+/* A narrow desktop has no room for both words in Compare: the filter's word stays, "Change" goes. */
+@media (max-width: 760px) {
+  .stepper-text[data-filter] .stepper-prefix { display: none; }
+}
+
+.stepper-arrows { display: flex; padding-right: 4px; }
+.pill-step {
+  appearance: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 150ms ease;
+}
+.pill-step::before {
+  content: '';
+  position: absolute;
+  inset: 5px 1px;
+  border-radius: 6px;
+  background: transparent;
+  transition: background-color 150ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.pill-step svg { position: relative; }
+.pill-step:disabled { color: var(--faint); cursor: default; }
+.pill-step:active:not(:disabled)::before { transform: scale(0.9); background: #ffffff14; }
+@media (hover: hover) {
+  .pill-step:hover:not(:disabled) { color: var(--text); }
+  .pill-step:hover:not(:disabled)::before { background: #ffffff14; }
+}
+
+/* Compare / Go to latest: stacked in one cell so the slot keeps the wider width. */
+.swap-seg { display: grid; }
+.swap-seg > .pill-btn { grid-area: 1 / 1; justify-content: center; }
+.swap-seg > [inert] { pointer-events: none; }
+.compare-btn { color: var(--muted); }
+@media (hover: hover) {
+  .compare-btn:hover:not(:disabled) { color: var(--text); }
+}
+.latest-btn { background: var(--raised); color: var(--text); }
+@media (hover: hover) {
+  .latest-btn:hover { background: #323232; }
+}
+
+/* Compare: [56] → [60], then Wipe | Side by side and ✕. */
+.compare-versions { gap: 0; padding: 0 2px 0 8px; }
+.version-field[data-baseline]:not(:focus):not([data-invalid]) { box-shadow: inset 0 0 0 1px #ffffff30; }
+.arrow-btn { gap: 0; padding: 0 6px; color: var(--muted); }
+@media (hover: hover) {
+  .arrow-btn:hover:not(:disabled) { color: var(--text); }
+}
+.pill-dock[data-phone] .version-btn .muted { color: var(--muted); }
+.pill-dock[data-phone] .version-btn { gap: 5px; }
+
+.compare-seg { gap: 2px; }
+.layout-toggle { display: flex; padding: 2px; border-radius: 999px; background: #0f0f0f; }
+.layout-opt {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 150ms ease;
+}
+.layout-opt[data-on] { color: var(--text); cursor: default; }
+.layout-opt:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+@media (hover: hover) {
+  .layout-opt:not([data-on]):hover { color: var(--text); }
+}
+.layout-indicator { position: absolute; inset: 0; border-radius: 999px; background: var(--raised); }
+.layout-opt-label { position: relative; }
+
+.close-btn { width: 34px; padding: 0; justify-content: center; color: var(--muted); }
+@media (hover: hover) {
+  .close-btn:hover { color: var(--text); }
+}
+
+/* Put away: the pill becomes a chip in the bottom-right corner. */
+.pill-dock[data-retracted] { justify-content: flex-end; }
+.pill-dock[data-phone][data-retracted] .dock-body { width: auto; }
+.retract-btn { padding: 0 9px; color: var(--muted); }
+@media (hover: hover) {
+  .retract-btn:hover { color: var(--text); }
+}
+
+.chip {
+  appearance: none;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 150ms ease;
+}
+.chip:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (hover: hover) {
+  .chip:hover { background: var(--raised); }
+}
+.chip .num { font-size: 12px; }
+
+.chip-hint { left: auto; right: 0; opacity: 0; transition: opacity 150ms ease; }
+@media (hover: hover) {
+  .chip:hover .chip-hint { opacity: 1; transition-delay: 400ms; }
+}
+.chip:focus-visible .chip-hint { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .chip-hint { transition: none; }
+}

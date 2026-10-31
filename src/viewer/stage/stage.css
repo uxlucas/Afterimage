@@ -1,0 +1,174 @@
+.stage { --label-lift: 0px; position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--surface); }
+
+/* Each frame sits in a column that clips it (the whole stage, or one side by side column) and, inside that, a
+   box that Compare scales and pans. Neither takes pointer input: only the frame does, and in the wipe the base
+   box's clip-path cuts the frame's hit area along the divider too. */
+.frame-col { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.frame-col[data-role='base'] { z-index: 1; }
+.frame-box { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; pointer-events: none; }
+.stage .frame { position: absolute; inset: 0; pointer-events: auto; }
+.stage .frame[data-visible='false'] { visibility: hidden; }
+.stage[data-dragging] { cursor: ew-resize; }
+.stage[data-dragging] .frame { pointer-events: none; }
+
+/* Wipe divider: a 1px line with a grip. The strip around the line is a little wider than the line, so it is
+   easy to catch without taking much of the page next to it. */
+.wipe-divider {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  margin-left: -4.5px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.wipe-line { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--surface); box-shadow: 0 0 0 0.5px #ffffff1f; }
+.wipe-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: 0 0 0 1px var(--hairline), 0 2px 8px #0000004d;
+  transform: translate(-50%, -50%);
+  transition: color 150ms ease, background-color 150ms ease;
+  outline: none;
+}
+.wipe-grip:focus-visible { box-shadow: 0 0 0 2px var(--ring), 0 2px 8px #0000004d; }
+.wipe-divider[data-dragging] .wipe-grip { background: var(--raised); color: var(--text); }
+@media (hover: hover) {
+  .wipe-divider:hover .wipe-grip { color: var(--text); }
+}
+
+/* v56 Before / v60 After. */
+.compare-label {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px #0003, 0 8px 24px #0004;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.compare-label .num { font-size: 12px; }
+.compare-label-kind { color: var(--muted); }
+
+/* Side by side: zoom and whether the two sides scroll together. They sit in the strip the columns leave above
+   them (SYNC_STRIP in Stage.jsx, 38px), centred in it, so they never cover either prototype. */
+.side-tools { position: absolute; z-index: 4; top: 5px; left: 50%; display: flex; gap: 6px; translate: -50% 0; }
+.zoom-toggle {
+  display: flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px #0003, 0 8px 24px #0004;
+}
+.zoom-opt {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  margin: 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color 150ms ease;
+}
+.zoom-opt[data-on] { color: var(--text); cursor: default; }
+.zoom-opt:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+@media (hover: hover) {
+  .zoom-opt:not([data-on]):hover { color: var(--text); }
+}
+.zoom-indicator { position: absolute; inset: 0; border-radius: 999px; background: var(--raised); }
+.zoom-opt-label { position: relative; }
+
+.sync-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0;
+  padding: 0 11px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px #0003, 0 8px 24px #0004;
+  transition: color 150ms ease, background-color 150ms ease;
+  touch-action: manipulation;
+}
+.sync-chip[data-on] { color: var(--text); }
+.sync-chip:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (hover: hover) {
+  .sync-chip:hover { background: var(--raised); }
+}
+.sync-dot { width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--muted); transition: background-color 150ms ease, box-shadow 150ms ease; }
+.sync-chip[data-on] .sync-dot { background: var(--green); box-shadow: inset 0 0 0 1.5px var(--green); }
+
+/* Zoomed in side by side: which slice of the page a column shows, as a thin bar just above it. The bar's hit
+   area is taller than the line, so it is easy to catch. */
+.pan-bar { position: absolute; z-index: 3; height: 9px; touch-action: none; outline: none; }
+.pan-track, .pan-thumb { position: absolute; bottom: 2px; height: 3px; border-radius: 999px; }
+.pan-track { left: 0; right: 0; background: #ffffff0f; }
+.pan-thumb { background: var(--faint); transition: background-color 150ms ease; }
+.pan-bar[data-dragging] .pan-thumb { background: var(--text); }
+.pan-bar:focus-visible .pan-thumb { background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
+@media (hover: hover) {
+  .pan-bar:hover .pan-thumb { background: var(--muted); }
+}
+
+/* Side by side, the pill sits across the bottom of both columns, so labels sit above it. */
+.stage[data-layout='side'] { --label-lift: 60px; }
+
+.stage-note {
+  position: absolute;
+  z-index: 2;
+  bottom: 12px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px #0003, 0 8px 24px #0004;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.stage-note .num { color: var(--text); }
+
+/* Below this width the pill reaches the bottom-left corner, so the label sits above it instead. */
+@media (max-width: 1100px) {
+  .stage-note { bottom: 72px; }
+  .stage { --label-lift: 60px; }
+}
