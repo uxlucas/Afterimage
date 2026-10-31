@@ -1,8 +1,9 @@
+import * as init from './commands/init.js';
 import * as save from './commands/save.js';
 import { isUserError } from './errors.js';
 
 // One entry per command. Each module exports run(args, ctx) → exit code, a one-line usage and a summary.
-const commands = { save };
+const commands = { init, save };
 
 function overview() {
   const lines = Object.values(commands).map(command => `  ${command.usage}\n      ${command.summary}`);
