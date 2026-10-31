@@ -132,3 +132,129 @@ test('an app that moves itself to another path on load still gets its review', a
   const report = await checkExample(dir, { expectChange: 'Page one, revised', build: () => afterimage(dir, 'build'), appPath: '/home' });
   assert.deepEqual(report.versions.map(version => [version.id, version.path]), [['v2', '/home'], ['v1', '/']]);
 });
+
+// A temporary copy of an example that has its own history and can be saved to, so the original's history is never
+// touched. Its node_modules is a junction to the original's (it works on Windows without administrator rights), so the
+// copy builds with the same install. Build output and the viewer's site are left behind; the copy makes its own.
+async function copyExample(t, name) {
+  const source = example(name);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `afterimage-e2e-${name}-`));
+  t.after(async () => {
+    // The link first, so removing the copy cannot reach into the original install.
+    await fs.rm(path.join(dir, 'node_modules'), { force: true });
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const skipped = new Set(['node_modules', '.afterimage', 'dist', 'build']);
+  await fs.cp(source, dir, { recursive: true, filter: file => !skipped.has(path.relative(source, file).split(path.sep)[0]) });
+  await fs.symlink(path.join(source, 'node_modules'), path.join(dir, 'node_modules'), 'junction');
+  return dir;
+}
+
+// Edits a file of the copy. The edit must change it, so a typo in the search text fails here and not as a false pass.
+async function editFile(file, change) {
+  const before = (await fs.readFile(file, 'utf8')).replace(/\r\n/g, '\n');
+  const after = change(before);
+  assert.notEqual(after, before, `The edit changed nothing in ${file}`);
+  await fs.writeFile(file, after);
+}
+
+// Moving a component changes no style and nothing on the page, and still renames what the build generates. Astro and
+// Svelte 5 scope a component's styles with a hash of its file path, not of its CSS (checked: editing the style block
+// leaves data-astro-cid-yk4hkwyg and svelte-dfcawr as they were), so a rename is how their hashes move.
+// Astro's default puts its hash in an attribute, which no match key or comparison reads. Its `class` strategy puts it in
+// a class (astro-yk4hkwyg) on every element that has none of its own, so the Astro copy first saves a version built that
+// way, and the move is compared with that one.
+const scoped = [
+  {
+    name: 'astro',
+    prepare: async dir => {
+      await editFile(path.join(dir, 'astro.config.mjs'), () => "import { defineConfig } from 'astro/config';\n\nexport default defineConfig({ scopedStyleStrategy: 'class' });\n");
+      afterimage(dir, 'save', 'Scoped by class');
+      return 4;
+    },
+    move: { from: 'src/components/Card.astro', to: 'src/components/Box.astro', users: ['src/pages/index.astro', 'src/pages/about.astro'], rename: ['Card', 'Box'] },
+    retext: ['src/pages/index.astro', source => source.replace('Field notes from the coast', 'Field notes from the harbour')],
+    newText: 'Field notes from the harbour',
+  },
+  {
+    name: 'sveltekit-static',
+    prepare: async () => 3,
+    move: { from: 'src/lib/Counter.svelte', to: 'src/lib/Tally.svelte', users: ['src/routes/+page.svelte'], rename: ['Counter', 'Tally'] },
+    retext: ['src/routes/+page.svelte', source => source.replace('Welcome back to the studio', 'Welcome back to the harbour')],
+    newText: 'Welcome back to the harbour',
+  },
+];
+
+async function moveComponent(dir, { from, to, users, rename: [oldName, newName] }) {
+  await fs.rename(path.join(dir, from), path.join(dir, to));
+  for (const user of users) await editFile(path.join(dir, user), source => source.replaceAll(oldName, newName));
+}
+
+for (const { name, prepare, move, retext, newText } of scoped) {
+  test(`${name}: an edit that only reshuffles generated names shows zero changes`, async t => {
+    const dir = await copyExample(t, name);
+    const next = await prepare(dir);
+    await moveComponent(dir, move);
+    // The new hash is in the built page, so a version is saved even though the page renders as before.
+    assert.match(afterimage(dir, 'save', 'Moved'), new RegExp(`^Saved v${next} `, 'm'));
+    const report = await checkExample(dir, { expectCount: 0, build: () => afterimage(dir, 'build') });
+    assert.equal(report.versions[0].id, `v${next}`);
+  });
+
+  test(`${name}: a real text edit shows only that edit`, async t => {
+    const dir = await copyExample(t, name);
+    const next = await prepare(dir);
+    // The same move, so the new names are there to be mistaken for changes next to the real one.
+    await moveComponent(dir, move);
+    await editFile(path.join(dir, retext[0]), retext[1]);
+    assert.match(afterimage(dir, 'save', 'Retexted'), new RegExp(`^Saved v${next} `, 'm'));
+    await checkExample(dir, { expectCount: 1, expectChange: newText, build: () => afterimage(dir, 'build') });
+  });
+}
+
+// Generated names in a plain page, where no framework is needed to produce them: the ids, classes and attributes two
+// builds of the same page would differ in. The viewer must find nothing changed, and still find a real edit.
+const generatedPage = ({ id, scope, cid, gradient, stop }) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Generated names</title>
+    <style>svg { width: 48px; height: 48px; }</style>
+  </head>
+  <body>
+    <h1>Generated names</h1>
+    <p id="${id}">A paragraph with a generated id.</p>
+    <p><a href="#${id}">Jump to the paragraph</a></p>
+    <div class="${scope}"><button class="${scope}">Save</button></div>
+    <svg viewBox="0 0 24 24" data-astro-cid-${cid}>
+      <defs><linearGradient id="${gradient}"><stop offset="0" stop-color="${stop}"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs>
+      <rect class="${scope}" width="24" height="24" fill="url(#${gradient})" data-astro-cid-${cid}/>
+    </svg>
+  </body>
+</html>
+`;
+
+async function generatedPageSite(t, versions) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.cp(fixture('multipage'), dir, { recursive: true });
+  afterimage(dir, 'init');
+  for (const [index, version] of versions.entries()) {
+    await fs.writeFile(path.join(dir, 'index.html'), generatedPage(version));
+    afterimage(dir, 'save', `Version ${index + 1}`);
+  }
+  return dir;
+}
+
+const first = { id: '_r_1_', scope: 'svelte-abc123', cid: 'aaaaaaaa', gradient: '_r_2_', stop: '#ff0000' };
+const rebuilt = { id: ':r7:', scope: 'svelte-zzz999', cid: 'bbbbbbbb', gradient: ':r8:', stop: '#ff0000' };
+
+test('generated ids, classes and attributes that differ between builds are not changes', async t => {
+  const dir = await generatedPageSite(t, [first, rebuilt]);
+  await checkExample(dir, { expectCount: 0, build: () => afterimage(dir, 'build') });
+});
+
+test('an icon edited among generated names still shows as one change', async t => {
+  const dir = await generatedPageSite(t, [first, { ...rebuilt, stop: '#00ff00' }]);
+  await checkExample(dir, { expectCount: 1, build: () => afterimage(dir, 'build') });
+});

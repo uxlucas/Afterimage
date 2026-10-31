@@ -16,6 +16,9 @@
 //
 // expectChange is text the newest version adds or changes; it must appear in an Added or Changed row of the list.
 // A Removed row does not count: text that left the page is not what the newest version shows.
+// expectCount is the exact number of changes between the two newest versions, on the pill and in the panel. With 0 the
+// panel must say "No visible changes" and list nothing; above 0 the list has exactly that many rows. expectChange may
+// be left out when expectCount is given.
 // A version's frame passes when its body has visible text (trimmed innerText) and at least one element, and the
 // static server saw no request outside /afterimage/ while the viewer was open. A version's requests reach the server
 // under /afterimage/versions/ once the worker maps them; anything else reached the live app at the root, which can
@@ -194,15 +197,16 @@ async function readFrame(page, version, shows = '') {
   });
 }
 
-// checkExample(exampleDir, { expectChange, press, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, expectCount, press, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
+// expectCount is the exact change count between the two newest versions (see the header).
 // build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
 // appPath is where the app at / ends up once loaded, for an app that moves itself (a locale or sign-in redirect).
 // appMisses (RegExps on the app's own path) are files the app asks for and its own build lacks; see watchRequests.
 // press ({ button, shows }) clicks the button named `button` inside the newest version's frame and waits for its name
 // to become `shows`: only a page whose scripts ran (one that hydrated) can change it.
-export async function checkExample(exampleDir, { expectChange, press, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
-  assert.ok(expectChange, 'checkExample needs expectChange: text the newest version adds.');
+export async function checkExample(exampleDir, { expectChange, expectCount, press, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
+  assert.ok(expectChange || expectCount !== undefined, 'checkExample needs expectChange (text the newest version adds) or expectCount.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
   const site = path.resolve(exampleDir, config.out);
@@ -317,20 +321,33 @@ export async function checkExample(exampleDir, { expectChange, press, follow, bu
     await readFrame(page, newest);
     // The pill shows this button, with the count, once the live review has finished.
     await highlight.waitFor({ timeout: loadTimeout });
+    // The pill's own count, read first so that a wrong count fails with the number and not with a timeout further on.
+    const pillCount = Number(/(\d+) changes?$/.exec(await highlight.getAttribute('aria-label'))[1]);
+    if (expectCount !== undefined) assert.equal(pillCount, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the pill shows ${pillCount}`);
     await highlight.click();
     await page.getByRole('button', { name: /^Show versions$|\. Show versions$/ }).first().click();
     const dialog = page.getByRole('dialog');
+    if (expectCount === 0) {
+      // Nothing changed: the panel says so where the summary button would be, and has no list to open.
+      await dialog.getByText(`No visible changes from ${previous.id} to ${newest.id}`).waitFor({ timeout: loadTimeout });
+      assert.equal(await dialog.getByRole('list', { name: 'Changes' }).count(), 0, 'The panel lists changes where it should list none');
+      noFailures(`Changes ${previous.id} to ${newest.id}`);
+      report.changes = { from: previous.id, to: newest.id, count: 0, rows: [] };
+      return report;
+    }
     const summary = dialog.getByRole('button', { name: new RegExp(`^\\d+ changes? from ${previous.id} to ${newest.id}$`) });
     await summary.waitFor({ timeout: loadTimeout });
     const count = Number(/^(\d+)/.exec(text(await summary.innerText()))[1]);
     assert.ok(count > 0, `Expected changes between ${previous.id} and ${newest.id}, the viewer found ${count}`);
+    if (expectCount !== undefined) assert.equal(count, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the viewer found ${count}`);
     if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click();
     const list = dialog.getByRole('list', { name: 'Changes' });
     await list.waitFor({ timeout: loadTimeout });
     const rows = (await list.getByRole('listitem').locator('button[data-kind]').evaluateAll(buttons => buttons.map(button => ({ kind: button.dataset.kind, text: button.innerText })))).map(row => ({ kind: row.kind, text: text(row.text) }));
     assert.ok(rows.length > 0, 'The change list has no rows');
     const listing = rows.map(row => `[${row.kind}] ${row.text}`).join('\n');
-    assert.ok(rows.some(row => row.kind !== 'removed' && row.text.includes(expectChange)), `Expected an added or changed row to mention "${expectChange}". The list has:\n${listing}`);
+    if (expectCount !== undefined) assert.equal(rows.length, expectCount, `Expected ${expectCount} rows. The list has:\n${listing}`);
+    if (expectChange) assert.ok(rows.some(row => row.kind !== 'removed' && row.text.includes(expectChange)), `Expected an added or changed row to mention "${expectChange}". The list has:\n${listing}`);
     noFailures(`Changes ${previous.id} to ${newest.id}`);
     report.changes = { from: previous.id, to: newest.id, count, rows: rows.map(row => row.text) };
 

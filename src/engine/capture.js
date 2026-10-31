@@ -1,3 +1,5 @@
+import { isGeneratedAttribute, isGeneratedName } from './generated-names.js';
+
 const styleProperties = ['color', 'backgroundColor', 'backgroundImage', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor', 'borderRadius', 'boxShadow', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textAlign', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'gap', 'opacity', 'transform'];
 const normalize = value => value.replace(/\s+/g, ' ').trim();
 const normalizeAsset = value => value.replace(/\/versions\/v\d+\//g, '/versions/snapshot/');
@@ -10,14 +12,45 @@ function labelFor(element) {
 // The id an author gave an element so it matches across versions.
 export const stableId = element => element.dataset.afterimageId;
 
+// An id the author gave, not one a framework made up (React's useId): that one differs between builds.
+const ownId = element => (element.id && !isGeneratedName(element.id) ? element.id : '');
+
+// An href to a generated id, such as #_r_1_, is the same link in every build.
+const ownValue = value => value.replace(/^#(.+)$/, (whole, id) => (isGeneratedName(id) ? '#' : whole));
+
+// An icon's markup without the names a build generated, so a rebuilt icon is the same icon. Generated ids (a gradient's
+// useId) are numbered in order, and what points at them follows.
+function drawingOf(svg) {
+  const copy = svg.cloneNode(true);
+  const nodes = [...copy.querySelectorAll('*')];
+  const ids = new Map();
+  for (const node of nodes) {
+    for (const { name } of [...node.attributes]) if (isGeneratedAttribute(name)) node.removeAttribute(name);
+    for (const name of [...node.classList]) if (isGeneratedName(name)) node.classList.remove(name);
+    if (node.hasAttribute('class') && !node.classList.length) node.removeAttribute('class');
+    if (node.id && isGeneratedName(node.id)) {
+      ids.set(node.id, `generated-${ids.size}`);
+      node.id = ids.get(node.id);
+    }
+  }
+  if (ids.size) {
+    for (const node of nodes) {
+      for (const attribute of [...node.attributes]) {
+        attribute.value = attribute.value.replace(/#([^\s)"']+)/g, (whole, id) => (ids.has(id) ? `#${ids.get(id)}` : whole));
+      }
+    }
+  }
+  return copy.innerHTML;
+}
+
 function computeKey(element, keys) {
   if (stableId(element)) return `stable:${stableId(element)}`;
-  if (element.id) return `id:${element.id}`;
+  if (ownId(element)) return `id:${ownId(element)}`;
   if (element.tagName === 'BODY') return 'page';
-  if (element.tagName === 'LABEL' && element.htmlFor) return `label:${element.htmlFor}`;
+  if (element.tagName === 'LABEL' && element.htmlFor && !isGeneratedName(element.htmlFor)) return `label:${element.htmlFor}`;
   if (element.matches('input,textarea,select') && element.name) return `field:${element.tagName}:${element.name}`;
   const siblings = [...element.parentElement.children].filter(sibling => sibling.tagName === element.tagName);
-  const stableClass = [...element.classList].find(name => !/^(active|selected|hidden|open|v\d+)$/.test(name) && siblings.filter(sibling => sibling.classList.contains(name)).length === 1);
+  const stableClass = [...element.classList].find(name => !/^(active|selected|hidden|open|v\d+)$/.test(name) && !isGeneratedName(name) && siblings.filter(sibling => sibling.classList.contains(name)).length === 1);
   if (stableClass) return `${keyFor(element.parentElement, keys)}/${element.tagName.toLowerCase()}.${stableClass}`;
   return `${keyFor(element.parentElement, keys)}/${element.tagName.toLowerCase()}:${siblings.indexOf(element)}`;
 }
@@ -45,11 +78,11 @@ export function captureDocument(doc) {
     if (!rect.width || !rect.height || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
     const text = normalize([...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join(' '));
     const visualBox = style.backgroundColor !== 'rgba(0, 0, 0, 0)' || parseFloat(style.borderTopWidth) > 0;
-    if (!text && !element.id && !stableId(element) && !visualBox && !element.matches('input,textarea,select,button,img,svg,video,canvas')) continue;
+    if (!text && !ownId(element) && !stableId(element) && !visualBox && !element.matches('input,textarea,select,button,img,svg,video,canvas')) continue;
     const ancestors = [];
     for (let parent = element.parentElement; parent && parent !== doc.documentElement; parent = parent.parentElement) ancestors.push(keyFor(parent, keys));
-    const attributes = ['src', 'alt', 'href', 'type', 'placeholder', 'aria-label'].map(name => [name, normalizeAsset(element.getAttribute(name) || '')]);
-    if (element.tagName.toLowerCase() === 'svg') attributes.push(['drawing', element.innerHTML]);
+    const attributes = ['src', 'alt', 'href', 'type', 'placeholder', 'aria-label'].map(name => [name, normalizeAsset(ownValue(element.getAttribute(name) || ''))]);
+    if (element.tagName.toLowerCase() === 'svg') attributes.push(['drawing', drawingOf(element)]);
     const styles = Object.fromEntries(styleProperties.map(name => [name, normalizeAsset(style[name])]));
     for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
       if (parseFloat(style[`border${side}Width`]) === 0) styles[`border${side}Color`] = 'transparent';
