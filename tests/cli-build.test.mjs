@@ -1,0 +1,276 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { main } from '../src/cli/main.js';
+import { writeConfig } from '../src/cli/config.js';
+import { readSnapshot, fingerprint } from '../src/cli/history.js';
+import { assembleSite } from '../src/cli/site.js';
+
+async function temp(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
+  t.after(async () => {
+    assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith('afterimage-test-'));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  return root;
+}
+
+// Small stand-ins for the package's viewer and runtime, so these tests do not need a viewer build.
+async function fixtures(t) {
+  const root = await temp(t);
+  const viewerDir = path.join(root, 'viewer');
+  const runtimeDir = path.join(root, 'runtime');
+  await fs.mkdir(path.join(viewerDir, 'assets'), { recursive: true });
+  await fs.writeFile(path.join(viewerDir, 'index.html'), '<title>viewer</title>');
+  await fs.writeFile(path.join(viewerDir, 'assets/viewer.js'), 'viewer();');
+  await fs.mkdir(runtimeDir);
+  await fs.writeFile(path.join(runtimeDir, 'runtime.js'), 'runtime();');
+  return { viewerDir, runtimeDir };
+}
+
+async function run(cwd, args, extra = {}) {
+  const out = [];
+  const err = [];
+  const code = await main(args, { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, buildStdio: 'ignore', ...extra });
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+
+// The build copies page.txt to dist/index.html, so a test changes the build output by rewriting page.txt.
+const copyBuild = `node -e "const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/index.html',fs.readFileSync('page.txt'))"`;
+const configWith = (build, extra = {}) => ({ source: 'dist', build, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'unknown', ...extra });
+
+async function project(t, config = configWith(copyBuild)) {
+  const root = await temp(t);
+  await writeConfig(root, config);
+  await fs.writeFile(path.join(root, 'page.txt'), '<h1>One</h1>');
+  return root;
+}
+
+const listing = async directory => (await fs.readdir(directory, { recursive: true })).map(name => name.replaceAll('\\', '/')).sort();
+const exists = target => fs.access(target).then(() => true, () => false);
+
+// Two saved versions, the second with a nested file, CRLF text and bytes that are not valid text.
+async function twoVersions(t, config) {
+  const root = await project(t, config);
+  assert.equal((await run(root, ['save', 'First draft'])).code, 0);
+  await fs.writeFile(path.join(root, 'page.txt'), '<h1>Two</h1>\r\n<img src="assets/pixel.png">');
+  await fs.mkdir(path.join(root, 'dist/assets'), { recursive: true });
+  await fs.writeFile(path.join(root, 'dist/assets/pixel.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00, 0x0d, 0x0a]));
+  assert.equal((await run(root, ['save', 'Second draft'])).code, 0);
+  return root;
+}
+
+test('build merges the app at the root and the history under /afterimage', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.writeFile(path.join(root, 'dist/style.css'), 'body{}');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, 'Built .afterimage/site with 2 versions. Serve it from any static host; the history is at /afterimage/.\n');
+
+  const site = path.join(root, '.afterimage/site');
+  assert.deepEqual((await fs.readdir(site)).sort(), ['afterimage', 'assets', 'index.html', 'style.css']);
+  assert.deepEqual((await fs.readdir(path.join(site, 'afterimage'))).sort(), ['assets', 'index.html', 'runtime.js', 'versions', 'versions.json']);
+  assert.deepEqual((await fs.readdir(path.join(site, 'afterimage/versions'))).sort(), ['v1', 'v2']);
+  // The app is the build output, byte for byte.
+  assert.equal(await fs.readFile(path.join(site, 'index.html'), 'utf8'), '<h1>Two</h1>\r\n<img src="assets/pixel.png">');
+  assert.deepEqual(await fs.readFile(path.join(site, 'assets/pixel.png')), await fs.readFile(path.join(root, 'dist/assets/pixel.png')));
+  assert.equal(await fs.readFile(path.join(site, 'afterimage/index.html'), 'utf8'), '<title>viewer</title>');
+  assert.equal(await fs.readFile(path.join(site, 'afterimage/assets/viewer.js'), 'utf8'), 'viewer();');
+  assert.equal(await fs.readFile(path.join(site, 'afterimage/runtime.js'), 'utf8'), 'runtime();');
+  assert.deepEqual(await fs.readdir(path.dirname(site)), ['site'], 'no staging folder is left next to the site');
+});
+
+test('history is copied byte for byte', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  const manifestText = await fs.readFile(path.join(root, 'afterimage/versions.json'));
+  const served = path.join(root, '.afterimage/site/afterimage');
+  assert.deepEqual(await fs.readFile(path.join(served, 'versions.json')), manifestText);
+  for (const version of JSON.parse(manifestText).versions) {
+    const files = await readSnapshot(path.join(served, 'versions', version.id), { strict: true });
+    assert.equal(fingerprint(files), version.sha256, version.id);
+  }
+});
+
+test('an app that already has /afterimage stops the build', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.mkdir(path.join(root, 'dist/Afterimage'));
+  await fs.writeFile(path.join(root, 'dist/Afterimage/index.html'), 'mine');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /already has an afterimage\/ folder/);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+});
+
+test('a changed saved version stops the build before anything is written', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t, configWith(`${copyBuild} && node -e "require('fs').writeFileSync('ran.txt','x')"`));
+  await fs.rm(path.join(root, 'ran.txt'));
+  await fs.writeFile(path.join(root, 'afterimage/versions/v1/index.html'), '<h1>Edited</h1>');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /v1 has changed since it was saved/);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+  assert.equal(await exists(path.join(root, 'ran.txt')), false, 'the build did not run');
+});
+
+test('an unlisted snapshot stops the build before anything is written', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.mkdir(path.join(root, 'afterimage/versions/v99'));
+  await fs.writeFile(path.join(root, 'afterimage/versions/v99/index.html'), 'stray');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Unlisted snapshot/);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+});
+
+test('only the listed versions are copied, not the lock, stage folders or stray files', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const history = path.join(root, 'afterimage');
+  await fs.writeFile(path.join(history, '.afterimage-save.lock'), '{"pid":1}');
+  await fs.mkdir(path.join(history, '.afterimage-stage-abc/snapshot'), { recursive: true });
+  await fs.writeFile(path.join(history, '.afterimage-stage-abc/snapshot/index.html'), 'half saved');
+  await fs.writeFile(path.join(history, 'notes.txt'), 'stray');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  const served = await listing(path.join(root, '.afterimage/site/afterimage'));
+  assert.deepEqual(served.filter(name => /lock|stage|notes|v99/.test(name)), []);
+  assert.deepEqual(served.filter(name => /^versions\/[^/]+$/.test(name)), ['versions/v1', 'versions/v2']);
+});
+
+test('build with no versions explains how to save one', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t);
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, 'Save a first version with: afterimage save "Name"\n');
+  assert.deepEqual((await fs.readdir(root)).sort(), ['afterimage.config.json', 'page.txt']);
+});
+
+test('a build that fails leaves the earlier site byte for byte', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  const site = path.join(root, '.afterimage/site');
+  const snapshot = async () => Object.fromEntries(await Promise.all((await listing(site)).map(async name => {
+    const stat = await fs.stat(path.join(site, name));
+    return [name, stat.isFile() ? (await fs.readFile(path.join(site, name))).toString('base64') : null];
+  })));
+  const before = await snapshot();
+
+  // The app build fails: nothing is staged yet.
+  await writeConfig(root, configWith('node -e "process.exit(3)"'));
+  const failedBuild = await run(root, ['build'], dirs);
+  assert.equal(failedBuild.code, 1);
+  assert.match(failedBuild.stderr, /The build failed \(exit code 3\)\. Nothing was built\./);
+  assert.deepEqual(await snapshot(), before);
+
+  // A step fails after the new site is already half written: a file where the runtime folder should be.
+  await writeConfig(root, configWith(copyBuild));
+  const brokenRuntime = path.join(dirs.runtimeDir, 'not-a-folder');
+  await fs.writeFile(brokenRuntime, 'x');
+  const failedCopy = await run(root, ['build'], { ...dirs, runtimeDir: brokenRuntime });
+  assert.equal(failedCopy.code, 1);
+  assert.deepEqual(await snapshot(), before);
+  assert.deepEqual(await fs.readdir(path.dirname(site)), ['site'], 'the half-built folder is removed');
+});
+
+test('a second build replaces the first completely', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.writeFile(path.join(root, 'dist/old-only.txt'), 'old');
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  await fs.rm(path.join(root, 'dist/old-only.txt'));
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  assert.equal(await exists(path.join(root, '.afterimage/site/old-only.txt')), false);
+  assert.deepEqual(await fs.readdir(path.join(root, '.afterimage')), ['site']);
+});
+
+test('with the prototype at the project root the project files stay out of the site', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t, configWith(null, { source: '.' }));
+  await fs.rm(path.join(root, 'page.txt'));
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Root app</h1>');
+  await fs.writeFile(path.join(root, 'package.json'), '{}');
+  await fs.mkdir(path.join(root, 'node_modules/pkg'), { recursive: true });
+  await fs.writeFile(path.join(root, 'node_modules/pkg/index.js'), 'x');
+  await fs.mkdir(path.join(root, '.git'));
+  await fs.writeFile(path.join(root, '.git/HEAD'), 'ref');
+  assert.equal((await run(root, ['save', 'Only version'])).code, 0);
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^Built \.afterimage\/site with 1 version\. /);
+  assert.deepEqual((await fs.readdir(path.join(root, '.afterimage/site'))).sort(), ['afterimage', 'index.html']);
+});
+
+test('assembleSite without the app writes only the afterimage folder and ignores the app', async t => {
+  const dirs = await fixtures(t);
+  // The build would fail and the app has its own afterimage folder: neither matters without the app.
+  const root = await twoVersions(t);
+  const config = configWith('node -e "process.exit(3)"');
+  await fs.mkdir(path.join(root, 'dist/afterimage'));
+  await fs.writeFile(path.join(root, 'dist/afterimage/index.html'), 'mine');
+  const { outDir, versions } = await assembleSite({ projectDir: root, config, ...dirs, includeApp: false, buildStdio: 'ignore' });
+  assert.equal(versions, 2);
+  assert.equal(outDir, path.join(root, '.afterimage/site'));
+  assert.deepEqual(await fs.readdir(outDir), ['afterimage']);
+  assert.deepEqual((await fs.readdir(path.join(outDir, 'afterimage'))).sort(), ['assets', 'index.html', 'runtime.js', 'versions', 'versions.json']);
+});
+
+test('assembleSite with the app returns the output folder and version count', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const { outDir, versions } = await assembleSite({ projectDir: root, config: configWith(copyBuild), ...dirs, buildStdio: 'ignore' });
+  assert.equal(versions, 2);
+  assert.deepEqual((await fs.readdir(outDir)).sort(), ['afterimage', 'assets', 'index.html']);
+});
+
+test('a missing runtime folder is not an error', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const result = await run(root, ['build'], { ...dirs, runtimeDir: path.join(dirs.runtimeDir, 'missing') });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await exists(path.join(root, '.afterimage/site/afterimage/runtime.js')), false);
+});
+
+test('a viewer that is not built says how to build it and writes nothing', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const result = await run(root, ['build'], { ...dirs, viewerDir: path.join(dirs.viewerDir, 'missing') });
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, 'The viewer is not built. Run "npm run build:viewer" first.\n');
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+});
+
+test('an out folder that would replace the project or its history is refused', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  for (const out of ['.', 'afterimage', 'dist']) {
+    await writeConfig(root, configWith(copyBuild, { out }));
+    const result = await run(root, ['build'], dirs);
+    assert.equal(result.code, 1, out);
+    assert.match(result.stderr, /would replace/, out);
+  }
+  assert.equal(await exists(path.join(root, 'afterimage/versions.json')), true);
+});
+
+test('build outside a project points to init, and rejects stray arguments', async t => {
+  const root = await temp(t);
+  const outside = await run(root, ['build']);
+  assert.equal(outside.code, 1);
+  assert.equal(outside.stderr, 'No afterimage.config.json here. Run "afterimage init" first.\n');
+  const extra = await run(root, ['build', 'now']);
+  assert.equal(extra.code, 2);
+  assert.match(extra.stderr, /Usage: afterimage build/);
+  const help = await run(root, ['build', '--help']);
+  assert.equal(help.code, 0);
+  assert.match(help.stdout, /^Usage: afterimage build/);
+});
