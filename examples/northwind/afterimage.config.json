@@ -1,0 +1,8 @@
+{
+  "source": "prototype",
+  "build": null,
+  "history": "afterimage",
+  "out": ".afterimage/site",
+  "exclude": [],
+  "type": "plain"
+}

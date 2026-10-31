@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { saveVersion, readHistory, verifyHistory, readSnapshot, fingerprint } from '../src/cli/history.js';
 import { validateManifest } from '../src/engine/manifest.js';
 
-const northwind = fileURLToPath(new URL('./fixtures/northwind-history/', import.meta.url));
+const northwind = fileURLToPath(new URL('../examples/northwind/afterimage/', import.meta.url));
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));

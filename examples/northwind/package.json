@@ -1,0 +1,13 @@
+{
+  "name": "afterimage-example-northwind",
+  "private": true,
+  "description": "Afterimage example: a plain HTML sign-in screen with three saved versions.",
+  "scripts": {
+    "afterimage:save": "afterimage save",
+    "afterimage:dev": "afterimage dev",
+    "afterimage:build": "afterimage build"
+  },
+  "devDependencies": {
+    "afterimage-cli": "file:../.."
+  }
+}

@@ -3,3 +3,5 @@ viewer-dist/
 .afterimage/
 .superpowers/
 *.tgz
+# Their lockfiles embed this package's own dependency list and would change with every edit to it.
+examples/*/package-lock.json

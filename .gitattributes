@@ -1,3 +1,2 @@
 examples/*/afterimage/** -text
-tests/fixtures/** -text
 bin/* text eol=lf

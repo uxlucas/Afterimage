@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · Northwind</title>
+<style>
+:root{
+  --page: #fff;
+  --surface: #fff;
+  --ink: oklch(0.2 0 0);
+  --ink-2: oklch(0.42 0 0);
+  --ink-3: oklch(0.56 0 0);
+  --line: oklch(0.2 0 0 / 0.1);
+  --field: oklch(0.2 0 0 / 0.16);
+  --soft: oklch(0.955 0 0);
+  --soft-hover: oklch(0.925 0 0);
+  --link: oklch(0.5 0.13 250);
+  --badge: oklch(0.93 0.04 250);
+  --badge-ink: oklch(0.42 0.1 250);
+  --danger: oklch(0.55 0.15 30);
+  --ease-out: cubic-bezier(.23,1,.32,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;color:var(--ink);background:var(--page);min-height:100vh;display:grid;place-items:center;padding:48px 16px}
+button,input{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:2px}
+:focus-visible{outline:2px solid oklch(0.5 0.13 250 / .55);outline-offset:2px}
+
+.wrap{width:100%;max-width:400px}
+.card{background:var(--surface);border-radius:20px;padding:32px;box-shadow:0 0 0 1px rgb(0 0 0/.05),0 1px 3px rgb(0 0 0/.05),0 12px 32px -12px rgb(0 0 0/.12)}
+.mark{width:28px;height:28px;border-radius:8px;background:var(--ink);position:relative;margin-bottom:20px}
+.mark::after{content:"";position:absolute;inset:8px;border-radius:2px;background:#fff;transform:rotate(45deg) scale(.8)}
+h1{font-size:22px;font-weight:600;letter-spacing:-.015em;line-height:1.2}
+.sub{color:var(--ink-3);margin-top:4px}
+
+form{margin-top:24px;display:flex;flex-direction:column;gap:14px}
+.field label{display:flex;justify-content:space-between;align-items:baseline;font-weight:500;margin-bottom:6px}
+.field label a{font-weight:400;font-size:13px}
+.control{position:relative}
+input{width:100%;height:40px;padding:0 16px;border-radius:999px;border:0;background:var(--surface);box-shadow:inset 0 0 0 1px var(--field);font-size:16px;transition:box-shadow .15s ease}
+input::placeholder{color:var(--ink-3)}
+input:focus{outline:none;box-shadow:inset 0 0 0 1.5px var(--ink)}
+input[aria-invalid="true"]{box-shadow:inset 0 0 0 1.5px var(--danger)}
+.reveal{position:absolute;right:6px;top:6px;height:28px;padding:0 10px;border-radius:999px;font-size:12px;color:var(--ink-2)}
+.reveal:hover{background:var(--soft)}
+.error{color:var(--danger);font-size:12.5px;margin-top:6px;min-height:0}
+.error:empty{display:none}
+
+.primary{position:relative;height:42px;border-radius:999px;background:var(--ink);color:#fff;font-weight:500;display:grid;place-items:center;transition:opacity .15s ease,scale .15s var(--ease-out)}
+.primary:active{scale:.98}
+.primary[aria-busy="true"]{opacity:.7;pointer-events:none}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid rgb(255 255 255/.35);border-top-color:#fff;animation:spin .7s linear infinite}
+@keyframes spin{to{rotate:1turn}}
+.badge{position:absolute;top:-9px;right:18px;padding:1px 8px;border-radius:999px;background:var(--badge);color:var(--badge-ink);font-size:12px;font-weight:500;line-height:18px;box-shadow:0 0 0 2px var(--surface)}
+
+.or{display:flex;align-items:center;gap:12px;color:var(--ink-3);font-size:13px;margin:18px 0}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.alts{display:flex;flex-direction:column;gap:8px}
+.alt{height:40px;border-radius:999px;background:var(--soft);display:flex;align-items:center;justify-content:center;gap:8px;font-weight:500;transition:background-color .15s ease}
+.alt:hover{background:var(--soft-hover)}
+.alt svg{flex:none}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.foot{margin-top:22px;color:var(--ink-2)}
+.fine{margin-top:20px;text-align:center;color:var(--ink-3);font-size:12px;text-wrap:balance}
+.fine a{color:var(--ink-2)}
+
+.done{text-align:center;padding:8px 0}
+.done .tick{width:40px;height:40px;border-radius:50%;background:var(--soft);display:grid;place-items:center;margin:0 auto 16px}
+.done p{color:var(--ink-2);margin-top:6px}
+.done strong{color:var(--ink);font-weight:500}
+.done button{color:var(--link);margin-top:18px}
+.done button:hover{text-decoration:underline;text-underline-offset:2px}
+.enter{animation:enter .25s var(--ease-out) both}
+@keyframes enter{from{opacity:0;translate:0 4px}}
+
+@media (max-width:440px){.card{padding:24px 20px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0s!important;animation-duration:0s!important}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="card" id="card">
+    <div id="step">
+      <div class="mark" aria-hidden="true"></div>
+      <h1>Log in</h1><p class="sub">Continue to Northwind</p>
+      <form id="form" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" spellcheck="false">
+          <p class="error" id="emailError"></p>
+        </div>
+        <button class="primary" type="submit" id="submit"><span>Continue with email</span><span class="badge">Last used</span></button>
+      </form>
+      <div class="or">or</div>
+      <div class="alts">
+        <button class="alt" type="button" id="passkey"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="2.5"/><path d="M1.5 13.5c.4-2.4 2.2-3.8 4.5-3.8 1 0 1.9.3 2.6.8"/><circle cx="12" cy="10" r="1.6"/><path d="M12 11.6v3M12 13.2h1.2"/></svg>Sign in with passkey</button>
+        <div class="row">
+          <button class="alt" type="button">Google</button>
+          <button class="alt" type="button">Apple</button>
+        </div>
+      </div>
+      <p class="foot">New to Northwind? <a href="#">Create an account →</a></p>
+    </div>
+  </div>
+    <p class="fine">By continuing, you agree to the <a href="#">Terms</a> and <a href="#">Privacy Policy</a>.</p>
+</main>
+<script>
+// ---- Example prototype only: nothing is sent anywhere ----
+const form=document.getElementById('form'),email=document.getElementById('email'),submit=document.getElementById('submit');
+const card=document.getElementById('card'),step=document.getElementById('step');
+const password=document.getElementById('password');
+const reveal=document.getElementById('reveal');
+if(reveal)reveal.addEventListener('click',()=>{const show=password.type==='password';password.type=show?'text':'password';reveal.textContent=show?'Hide':'Show';reveal.setAttribute('aria-pressed',show)});
+const fail=(input,id,message)=>{document.getElementById(id).textContent=message;input.setAttribute('aria-invalid','true');input.focus();return false};
+const clear=(input,id)=>{document.getElementById(id).textContent='';input.removeAttribute('aria-invalid')};
+email.addEventListener('input',()=>clear(email,'emailError'));
+if(password)password.addEventListener('input',()=>clear(password,'passwordError'));
+form.addEventListener('submit',e=>{
+  e.preventDefault();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim()))return fail(email,'emailError','Enter an email like you@company.com.');
+  if(password&&!password.value)return fail(password,'passwordError','Enter your password.');
+  const label=submit.innerHTML;submit.setAttribute('aria-busy','true');submit.innerHTML='<span class="spin" aria-label="Signing in"></span>';
+  setTimeout(()=>{
+    const done=document.createElement('div');done.className='done enter';
+    done.innerHTML='<div class="tick"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></div><h1>Check your email</h1><p>We sent a sign-in link to <strong id="who"></strong>.</p><button type="button" id="again">Use a different email</button>';
+    done.querySelector('#who').textContent=email.value.trim();
+    step.hidden=true;card.append(done);
+    done.querySelector('#again').addEventListener('click',()=>{done.remove();step.hidden=false;submit.innerHTML=label;submit.removeAttribute('aria-busy');email.focus()});
+  },700);
+});
+</script>
+</body>
+</html>
