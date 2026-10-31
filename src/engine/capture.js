@@ -16,11 +16,13 @@ export const stableId = element => element.dataset.afterimageId;
 const ownId = element => (element.id && !isGeneratedName(element.id) ? element.id : '');
 
 // An href to a generated id, such as #_r_1_, is the same link in every build.
-const ownValue = value => value.replace(/^#(.+)$/, (whole, id) => (isGeneratedName(id) ? '#' : whole));
+export const ownValue = value => value.replace(/^#(.+)$/, (whole, id) => (isGeneratedName(id) ? '#' : whole));
 
 // An icon's markup without the names a build generated, so a rebuilt icon is the same icon. Generated ids (a gradient's
-// useId) are numbered in order, and what points at them follows.
-function drawingOf(svg) {
+// useId) are numbered in order, and what points at them follows: url(#id), href="#id". A reference to a generated id
+// outside the icon (a <use> of a sprite elsewhere on the page) is dropped to #, as ownValue does. A duplicate id counts
+// as its first element, which is the one the browser resolves. Text inside a <style> of the icon is left as it is.
+export function drawingOf(svg) {
   const copy = svg.cloneNode(true);
   const nodes = [...copy.querySelectorAll('*')];
   const ids = new Map();
@@ -29,15 +31,13 @@ function drawingOf(svg) {
     for (const name of [...node.classList]) if (isGeneratedName(name)) node.classList.remove(name);
     if (node.hasAttribute('class') && !node.classList.length) node.removeAttribute('class');
     if (node.id && isGeneratedName(node.id)) {
-      ids.set(node.id, `generated-${ids.size}`);
+      if (!ids.has(node.id)) ids.set(node.id, `generated-${ids.size}`);
       node.id = ids.get(node.id);
     }
   }
-  if (ids.size) {
-    for (const node of nodes) {
-      for (const attribute of [...node.attributes]) {
-        attribute.value = attribute.value.replace(/#([^\s)"']+)/g, (whole, id) => (ids.has(id) ? `#${ids.get(id)}` : whole));
-      }
+  for (const node of nodes) {
+    for (const attribute of [...node.attributes]) {
+      attribute.value = attribute.value.replace(/#([^\s)"']+)/g, (whole, id) => (ids.has(id) ? `#${ids.get(id)}` : isGeneratedName(id) ? '#' : whole));
     }
   }
   return copy.innerHTML;
@@ -81,7 +81,7 @@ export function captureDocument(doc) {
     if (!text && !ownId(element) && !stableId(element) && !visualBox && !element.matches('input,textarea,select,button,img,svg,video,canvas')) continue;
     const ancestors = [];
     for (let parent = element.parentElement; parent && parent !== doc.documentElement; parent = parent.parentElement) ancestors.push(keyFor(parent, keys));
-    const attributes = ['src', 'alt', 'href', 'type', 'placeholder', 'aria-label'].map(name => [name, normalizeAsset(ownValue(element.getAttribute(name) || ''))]);
+    const attributes = ['src', 'alt', 'href', 'type', 'placeholder', 'aria-label'].map(name => [name, normalizeAsset(name === 'href' ? ownValue(element.getAttribute(name) || '') : element.getAttribute(name) || '')]);
     if (element.tagName.toLowerCase() === 'svg') attributes.push(['drawing', drawingOf(element)]);
     const styles = Object.fromEntries(styleProperties.map(name => [name, normalizeAsset(style[name])]));
     for (const side of ['Top', 'Right', 'Bottom', 'Left']) {

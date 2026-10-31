@@ -322,7 +322,10 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     // The pill shows this button, with the count, once the live review has finished.
     await highlight.waitFor({ timeout: loadTimeout });
     // The pill's own count, read first so that a wrong count fails with the number and not with a timeout further on.
-    const pillCount = Number(/(\d+) changes?$/.exec(await highlight.getAttribute('aria-label'))[1]);
+    const pillLabel = await highlight.getAttribute('aria-label');
+    const pillMatch = /(\d+) changes?$/.exec(pillLabel ?? '');
+    assert.ok(pillMatch, `The pill's label is "${pillLabel}", which does not end in a change count. Did the viewer rename it?`);
+    const pillCount = Number(pillMatch[1]);
     if (expectCount !== undefined) assert.equal(pillCount, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the pill shows ${pillCount}`);
     await highlight.click();
     await page.getByRole('button', { name: /^Show versions$|\. Show versions$/ }).first().click();
