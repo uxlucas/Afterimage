@@ -1,5 +1,6 @@
 // The end-to-end check every example is held to: build it with its own scripts, serve the output, and drive the
-// real viewer in Chrome. Task by task, new framework examples reuse checkExample unchanged.
+// real viewer in Chrome. Task by task, new framework examples reuse checkExample, with an option only where an app
+// needs one.
 //
 // It waits on signals the page gives (a frame's load, the change list rendering), never on fixed sleeps, with one
 // exception: showing that the live review did not store a count needs a wait past its longest delay.
@@ -20,7 +21,9 @@
 // under /afterimage/versions/ once the worker maps them; anything else reached the live app at the root, which can
 // look right while showing the wrong version. Only the steps that open the app at / itself may ask for root paths.
 // follow ({ link, shows }) clicks the link named `link` inside the newest version's frame and waits for `shows`:
-// the frame must still hold the same version afterwards, and the stored change count must not change.
+// the frame must still hold the same version afterwards, and the stored change count must not change. The report's
+// followed.file is the file the frame's document came from: the entry page's still when the app's router took the
+// click, another page's after a hard link.
 // Switching versions and pressing Back must never leave the frame on the live app.
 // If the viewer renames those labels, this is the one file to update.
 import { spawnSync } from 'node:child_process';
@@ -32,12 +35,19 @@ import { chromium } from 'playwright-core';
 import { readConfig } from '../../src/cli/config.js';
 import { fileFor, requestPath, sendFile } from '../../src/cli/static-files.js';
 import { entryPath } from '../../src/viewer/frames.js';
+import { isServedPath } from '../../src/runtime/map.js';
 
 const loadTimeout = 15_000;
 const text = value => String(value).replace(/\s+/g, ' ').trim();
 
+const isFile = file => fs.stat(file).then(stat => stat.isFile(), () => false);
+
 // Serves a built site on a free port of its own. Returns { origin, take, close }: take() returns the paths requested
 // since the last call. The favicon is the browser's own request, not the example's.
+// The live app at the root is served the way Netlify, and Vercel with cleanUrls, serve static output, since apps rely
+// on it (Next links to /about and writes about.html): /about from about.html, and /about redirected to /about/ when
+// there is an about/index.html. Under /afterimage/ only exact files are, as afterimage dev and plain file servers do,
+// so a version that renders proves the worker finds clean URLs on its own.
 async function serve(root) {
   let seen = [];
   const server = http.createServer(async (req, res) => {
@@ -46,6 +56,13 @@ async function serve(root) {
     if (pathname === null) { res.writeHead(400).end(); return; }
     const file = fileFor(root, pathname);
     if (!file) { res.writeHead(403).end(); return; }
+    if (!isServedPath(pathname) && !pathname.endsWith('/') && !await isFile(file)) {
+      const page = fileFor(root, `${pathname}.html`);
+      if (page && await isFile(page)) { await sendFile(res, page); return; }
+      const index = fileFor(root, `${pathname}/index.html`);
+      const asked = new URL(req.url, 'http://localhost');
+      if (index && await isFile(index)) { res.writeHead(301, { Location: `${asked.pathname}/${asked.search}` }).end(); return; }
+    }
     await sendFile(res, file);
   });
   await new Promise((resolve, reject) => {
@@ -64,23 +81,38 @@ async function serve(root) {
 }
 
 // Runs the example's own afterimage:build script, so the check covers what a user would run.
+// Next's and Astro's telemetry are turned off through the environment, which works in every shell (VAR=1 cmd does not
+// on Windows).
+const buildEnv = { ...process.env, NEXT_TELEMETRY_DISABLED: '1', ASTRO_TELEMETRY_DISABLED: '1' };
 function npmBuild(exampleDir) {
   // shell: true so that npm (npm.cmd on Windows) resolves.
-  const result = spawnSync('npm run afterimage:build', { cwd: exampleDir, shell: true, encoding: 'utf8' });
+  const result = spawnSync('npm run afterimage:build', { cwd: exampleDir, shell: true, encoding: 'utf8', env: buildEnv });
   if (result.status !== 0) {
     throw new Error(`"npm run afterimage:build" failed in ${exampleDir} (exit ${result.status}). Did you run "npm run install:examples"?\n${result.stdout}${result.stderr}`);
   }
 }
 
-// Collects every same-origin request that failed, per step. The favicon is not part of the example.
-function watchRequests(page, origin) {
+// Collects every same-origin request that failed, per step. The favicon is not part of the example, and neither are
+// the appMisses: paths the app's own build asks for and does not have, which the live app misses too. They are
+// matched on the app's own path, so /afterimage/versions/vN/x counts as /x.
+// A request fails with a status of 400 or more, or with a network error. net::ERR_ABORTED is not one: it is a request
+// the page or the browser called off. Chrome reports every answered HEAD that way, Next stops reading prefetch bodies
+// it is done with (on the live app at / as much as in a version), and a frame that moves on cancels what it had in
+// flight. Whether the version rendered, and stayed itself, is what the steps check.
+function watchRequests(page, origin, appMisses) {
   let failures = [];
-  const ours = url => url.startsWith(`${origin}/`) && new URL(url).pathname !== '/favicon.ico';
+  const ours = url => {
+    if (!url.startsWith(`${origin}/`)) return false;
+    const { pathname } = new URL(url);
+    const own = pathname.replace(/^\/afterimage\/versions\/v[1-9]\d*(?=\/)/, '');
+    return pathname !== '/favicon.ico' && !appMisses.some(pattern => pattern.test(own));
+  };
   page.on('response', response => {
     if (ours(response.url()) && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   page.on('requestfailed', request => {
-    if (ours(request.url())) failures.push(`${request.failure()?.errorText ?? 'failed'} ${request.url()}`);
+    const error = request.failure()?.errorText ?? 'failed';
+    if (error !== 'net::ERR_ABORTED' && ours(request.url())) failures.push(`${error} ${request.url()}`);
   });
   return {
     // Returns what failed since the last call and starts over.
@@ -123,15 +155,16 @@ async function readFrame(page, version, shows = '') {
     const element = document.querySelector('iframe[data-role="target"]');
     const doc = element.contentDocument;
     const visibleText = doc.body.innerText.trim();
-    return { text: visibleText, hasContent: visibleText.length > 0 && doc.body.children.length > 0, href: doc.location.href, path: doc.location.pathname, version: element.contentWindow.__afterimageVersion ?? null };
+    return { text: visibleText, hasContent: visibleText.length > 0 && doc.body.children.length > 0, href: doc.location.href, path: doc.location.pathname, version: element.contentWindow.__afterimageVersion ?? null, file: element.contentWindow.__afterimageFile ?? null };
   });
 }
 
-// checkExample(exampleDir, { expectChange, follow, build, appPath }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
 // build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
 // appPath is where the app at / ends up once loaded, for an app that moves itself (a locale or sign-in redirect).
-export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild, appPath = '/' }) {
+// appMisses (RegExps on the app's own path) are files the app asks for and its own build lacks; see watchRequests.
+export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
   assert.ok(expectChange, 'checkExample needs expectChange: text the newest version adds.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
@@ -144,12 +177,15 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
   try {
     browser = await chromium.launch({ channel: 'chrome' });
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
-    const requests = watchRequests(page, server.origin);
+    const requests = watchRequests(page, server.origin, appMisses);
     // atRoot: the step opened the app at / itself, so root paths are expected there.
     const noFailures = (step, { atRoot = false } = {}) => {
       const reached = server.take().filter(pathname => !atRoot && !pathname.startsWith('/afterimage/'));
       assert.deepEqual([...requests.take(), ...reached.map(pathname => `reached the live app at the root: ${pathname}`)], [], `${step}: these requests failed`);
     };
+    // An app goes on asking for files after load (Next prefetches the pages it links to). Waiting for the network to go
+    // quiet keeps those requests in the step that opened the app at /, where root paths are expected.
+    const settle = () => page.waitForLoadState('networkidle', { timeout: loadTimeout });
     const viewer = query => page.goto(`${server.origin}/afterimage/?${query}`, { waitUntil: 'load', timeout: loadTimeout });
     const highlight = page.getByRole('button', { name: /^Highlight changes, \d+ changes?$/ });
     const storedCounts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
@@ -163,6 +199,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     const appBody = await page.evaluate(() => document.body.innerText.trim().length);
     assert.ok(appBody > 0 || await page.locator('body *').count() > 0, 'The app at / rendered an empty page');
     assert.equal(new URL(page.url()).pathname, appPath, `The app at / ended up at ${new URL(page.url()).pathname}, not ${appPath}`);
+    await settle();
     noFailures('App at /', { atRoot: true });
     report.app = { title: await page.title(), textLength: appBody };
 
@@ -193,7 +230,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
       const after = await storedCounts();
       for (const [key, summary] of Object.entries(counts)) assert.deepEqual(after[key], summary, `Following "${follow.link}" changed the stored count ${key}`);
       noFailures(`Following "${follow.link}" in ${newest.id}`);
-      report.followed = { link: follow.link, path: frame.path };
+      report.followed = { link: follow.link, path: frame.path, file: frame.file };
     }
 
     // Switching versions moves the frame without a history entry of its own, so Back leaves the viewer page instead of
@@ -225,6 +262,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     // The worker the viewer registered never takes over the app at the root.
     await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });
     assert.equal(await page.evaluate(() => Boolean(navigator.serviceWorker?.controller)), false, 'The app at / is controlled by a service worker after the viewer ran');
+    await settle();
     noFailures('App at / after the viewer', { atRoot: true });
 
     // The two newest versions compared: highlights on, the change list names the change.

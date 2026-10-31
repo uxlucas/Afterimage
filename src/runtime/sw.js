@@ -26,6 +26,13 @@
 //   (the viewer, anything that never navigated into a version) pass through.
 // - Navigations. A frame going to /about is out of scope, so this worker never sees it. frame.js catches those
 //   and sends them to /afterimage/versions/vN/about instead.
+// - Clean URLs. Static hosts answer /about from about.html (Netlify by default, Vercel with cleanUrls) or redirect it
+//   to /about/ when there is an about/index.html, and built apps rely on that: Next's static export writes about.html,
+//   links to /about and sends HEAD /about before it prefetches; Astro writes about/index.html and links to /about.
+//   Whatever serves the version folders may do neither (afterimage dev and plain file servers do not), so a 404 for
+//   a path in a version, page or subresource, is tried again here the same way: <path>.html answers in its place,
+//   and <path>/index.html turns it into a redirect to <path>/. The app sees the path it asked for, as on such a host.
+//   A path ending in / or .html, and any answer other than 404, are left as the host gave them.
 // - Timing. The viewer waits until this worker is active before it creates frames, and install/activate take over
 //   at once (skipWaiting, clients.claim), so a frame's first request is already mapped.
 // - History. The viewer moves a frame to another version with location.replace, so its own version switches add no
@@ -129,17 +136,47 @@ async function recall(clientId) {
   }
 }
 
-// The init is spelled out: a Request passed as init would drop its body's streaming mode. Only GET and HEAD get here.
+// `request` sent to `url` instead. The init is spelled out: a Request passed as init would drop its body's streaming
+// mode. new Request refuses mode 'navigate'; for a page's own origin it amounts to 'same-origin'. Only GET and HEAD
+// get here.
+function like(request, url, method = request.method) {
+  const { headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal } = request;
+  return new Request(url, { method, headers, mode: mode === 'navigate' ? 'same-origin' : mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal });
+}
+
+// The response with no URL of its own (see Response URL above). Redirects are passed back as they are: a redirect has
+// no body or base URL to keep. One with redirect 'manual' is opaque (status 0), which a new Response cannot carry,
+// and the page follows it or not as it asked; the only other redirects here are the clean-URL ones made below.
+// redirect 'error' needs nothing: fetch rejects on a redirect, as it would have without the worker.
+function plain(response) {
+  if (response.type === 'opaqueredirect' || response.status === 0 || (response.status >= 300 && response.status < 400)) return response;
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+// Clean URLs (see above). `found` is the host's answer for `inVersion`, the path in the version folder; `asked` is the
+// URL the request was made with, which a redirect adds the slash to, so the page goes on to ask for the path it would
+// on such a host.
+async function withCleanUrls(request, inVersion, asked, found) {
+  if (found.status !== 404) return found;
+  const at = suffix => {
+    const url = new URL(inVersion);
+    url.pathname += suffix;
+    return url.href;
+  };
+  const { pathname } = new URL(inVersion);
+  if (pathname.endsWith('/') || pathname.toLowerCase().endsWith('.html')) return found;
+  const page = await fetch(like(request, at('.html')));
+  if (page.ok) return page;
+  if (!(await fetch(like(request, at('/index.html'), 'HEAD'))).ok) return found;
+  const slashed = new URL(asked);
+  slashed.pathname += '/';
+  return Response.redirect(slashed.href, 301);
+}
+
 async function answer(request, id) {
   if (!id) return fetch(request);
-  const { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal } = request;
-  const mapped = new Request(mapRequest({ clientVersion: id, url: request.url }), { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal });
-  const response = await fetch(mapped);
-  // A request with redirect 'manual' gets an opaque redirect (status 0), which a new Response cannot carry. It is
-  // passed back as it is: a redirect has no body or base URL to keep, and the page follows it or not as it asked.
-  // redirect 'error' needs nothing: fetch rejects on a redirect, as it would have without the worker.
-  if (response.type === 'opaqueredirect' || response.status === 0) return response;
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  const inVersion = mapRequest({ clientVersion: id, url: request.url });
+  return plain(await withCleanUrls(request, inVersion, request.url, await fetch(like(request, inVersion))));
 }
 
 self.addEventListener('fetch', event => {
@@ -148,11 +185,14 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin) return;
   if (request.mode === 'navigate') {
     const id = versionInPath(url.pathname);
-    if (id && event.resultingClientId) {
+    if (!id) return;
+    if (event.resultingClientId) {
       const entry = { id, seen: false };
       versions.set(event.resultingClientId, entry);
       event.waitUntil(remember(event.resultingClientId, entry).catch(() => {}));
     }
+    // Answered here only for the clean URLs; a page the host has comes back with its own status, headers and body.
+    event.respondWith(fetch(request).then(found => withCleanUrls(request, request.url, request.url, found)).then(plain));
     return;
   }
   // A static site has nothing that takes a POST, so other methods pass through with their bodies untouched.

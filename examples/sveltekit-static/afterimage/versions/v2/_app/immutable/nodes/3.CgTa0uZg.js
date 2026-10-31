@@ -1,0 +1,1 @@
+import{A as e,d as t,p as n}from"../chunks/BA9jPh2-.js";var r=n(`<h1>About this site</h1> <p>A second route, reached through the SvelteKit router.</p> <p><a href="/">Back home</a></p>`,1);function i(n){var i=r();e(4),t(n,i)}export{i as component};

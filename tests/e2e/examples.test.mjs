@@ -34,6 +34,41 @@ test('vite-react: home and /about render inside the viewer, the live app at / is
   assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'dist/index.html')));
 });
 
+test('next-static: home and /about render inside the viewer, the live app at / is untouched', async () => {
+  const dir = example('next-static');
+  // Next 16.4.3 on Windows writes a nested page's prefetch segment as about/__next.about/__PAGE__.txt (it names the
+  // file from a path.relative, which has backslashes there) and then asks for about/__next.about.__PAGE__.txt. The
+  // live app at / misses it the same way, and Next falls back to about.txt. Elsewhere the names agree.
+  const appMisses = process.platform === 'win32' ? [/^\/about\/__next\.about\.__PAGE__\.txt$/] : [];
+  const report = await checkExample(dir, { expectChange: 'Launch day is Friday', follow: { link: 'About this site', shows: 'A second page' }, appMisses });
+  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+  // The App Router took the click (the document is still the entry page) and moved to its own clean path.
+  assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
+  const site = path.join(dir, '.afterimage/site');
+  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'out/index.html')));
+});
+
+test('astro: both pages render inside the viewer, and a hard link stays in the version', async () => {
+  const dir = example('astro');
+  const report = await checkExample(dir, { expectChange: 'Field notes from the coast', follow: { link: 'About this site', shows: 'A second page' } });
+  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+  // Astro writes about/index.html and links to /about. The click loads a new document, which the worker answers with a
+  // redirect to /about/, as a host would.
+  assert.deepEqual([report.followed.path, report.followed.file], ['/about/', '/afterimage/versions/v2/about/']);
+  const site = path.join(dir, '.afterimage/site');
+  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'dist/index.html')));
+});
+
+test('sveltekit-static: both prerendered routes render inside the viewer, and the page hydrates', async () => {
+  const dir = example('sveltekit-static');
+  const report = await checkExample(dir, { expectChange: 'Welcome back to the studio', follow: { link: 'About this site', shows: 'A second route' } });
+  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+  // Only a hydrated page has the router that takes the click, so the document is still the entry page.
+  assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
+  const site = path.join(dir, '.afterimage/site');
+  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'build/index.html')));
+});
+
 test('a multi-page plain site keeps hard links inside the version', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

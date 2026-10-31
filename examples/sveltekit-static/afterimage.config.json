@@ -1,0 +1,8 @@
+{
+  "source": "build",
+  "build": "npm run build",
+  "history": "afterimage",
+  "out": ".afterimage/site",
+  "exclude": [],
+  "type": "sveltekit-static"
+}

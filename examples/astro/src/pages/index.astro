@@ -1,0 +1,18 @@
+---
+import Card from '../components/Card.astro';
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>Astro</title>
+	</head>
+	<body>
+		<h1>Field notes from the coast</h1>
+		<Card title="Every page is its own file" href="/about" label="About this site">
+			<p>Astro builds each page to HTML, so a link here is a full page load.</p>
+		</Card>
+	</body>
+</html>

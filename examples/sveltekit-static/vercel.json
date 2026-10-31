@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm run afterimage:build",
+  "outputDirectory": ".afterimage/site"
+}

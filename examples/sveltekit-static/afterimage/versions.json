@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "versions": [
+    {
+      "id": "v2",
+      "name": "Second",
+      "label": "Version 2",
+      "file": "versions/v2/index.html",
+      "notes": [],
+      "savedAt": "2026-10-31T22:49:57.280Z",
+      "sha256": "14844ea83cf3741ac21c8f14b463508179397ccc6d55b82c491a4ded1f57b372"
+    },
+    {
+      "id": "v1",
+      "name": "First",
+      "label": "Version 1",
+      "file": "versions/v1/index.html",
+      "notes": [],
+      "savedAt": "2026-10-31T22:49:50.750Z",
+      "sha256": "53b8e7aab3dc9804fd3a0c71295a2671708bc1055a5b4a60b1928dcb81d1a596"
+    }
+  ]
+}

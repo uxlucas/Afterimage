@@ -1,0 +1,1 @@
+import{S as e,d as t,f as n,o as r}from"../chunks/BA9jPh2-.js";var i=Object.defineProperty,a=((e,t)=>{let n={};for(var r in e)i(n,r,{get:e[r],enumerable:!0});return t||i(n,Symbol.toStringTag,{value:`Module`}),n})({prerender:()=>!0});function o(i,a){var o=n(),s=e(o);r(s,()=>a.children),t(i,o)}export{o as component,a as universal};

@@ -227,7 +227,12 @@ test('the worker maps a version document\'s requests into its folder, and passes
   const world = workerScope({ alive: ['frame-1'] });
   const { listeners } = startWorker(world);
 
-  assert.equal(await navigateTo(listeners, 'v3', 'frame-1'), null);
+  // A navigation into a version gets the host's page, with no URL of its own so the document keeps the one it asked for.
+  const page = await navigateTo(listeners, 'v3', 'frame-1');
+  assert.equal(await page.text(), 'body of /afterimage/versions/v3/index.html');
+  assert.equal(page.url, '');
+  // Navigations anywhere else are not the worker's to answer.
+  assert.equal(await dispatch(listeners, { url: `${origin}/afterimage/`, mode: 'navigate', resultingClientId: 'viewer' }), null);
   const mapped = await asset(listeners, 'frame-1');
   assert.equal(await mapped.text(), 'body of /afterimage/versions/v3/assets/a.js');
   assert.equal(mapped.headers.get('Content-Type'), 'text/javascript');
@@ -290,9 +295,73 @@ test('a redirect: manual request is still mapped, and its opaque redirect comes 
   };
   const { listeners } = startWorker(world);
   await navigateTo(listeners, 'v2', 'frame-1');
+  asked.length = 0;
   const answer = await dispatch(listeners, { url: `${origin}/old-path`, mode: 'same-origin', redirect: 'manual', clientId: 'frame-1' });
   assert.equal(answer, redirected);
   assert.deepEqual(asked, [['/afterimage/versions/v2/old-path', 'manual']]);
+});
+
+// A host without clean URLs: it answers each path in `files` with that status, and anything else with a 404.
+// Returns the requests it saw, as "METHOD /path".
+function fileHost(world, files) {
+  const asked = [];
+  world.network = async request => {
+    const { pathname } = new URL(request.url);
+    asked.push(`${request.method} ${pathname}`);
+    const status = files[pathname] ?? 404;
+    return new Response(status === 404 ? 'Not found' : `body of ${pathname}`, { status, headers: { 'Content-Type': 'text/html' } });
+  };
+  return asked;
+}
+
+test('a page missing from a version is found the way a host with clean URLs finds it', async () => {
+  const world = workerScope({ alive: ['frame-1'] });
+  const v2 = '/afterimage/versions/v2';
+  const asked = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200, [`${v2}/broken`]: 500 });
+  const { listeners } = startWorker(world);
+  const open = file => dispatch(listeners, { url: `${origin}${v2}/${file}`, mode: 'navigate', resultingClientId: 'frame-1' });
+
+  // about.html answers for /about, and the document keeps the URL it asked for, query and all.
+  const about = await open('about?tab=2');
+  assert.equal(about.status, 200);
+  assert.equal(await about.text(), `body of ${v2}/about.html`);
+  assert.equal(about.url, '');
+  assert.deepEqual(asked.splice(0), [`GET ${v2}/about`, `GET ${v2}/about.html`]);
+  // A folder with an index.html is a redirect to the path with a slash, as a host gives it.
+  const docs = await open('docs?tab=2');
+  assert.equal(docs.status, 301);
+  assert.equal(docs.headers.get('Location'), `${origin}${v2}/docs/?tab=2`);
+  assert.deepEqual(asked.splice(0), [`GET ${v2}/docs`, `GET ${v2}/docs.html`, `HEAD ${v2}/docs/index.html`]);
+  // Nowhere to be found: the host's own 404.
+  const missing = await open('missing');
+  assert.equal(missing.status, 404);
+  assert.equal(await missing.text(), 'Not found');
+  asked.splice(0);
+  // A path ending in / or .html, and any answer but a 404, are the host's to give.
+  for (const [file, status] of [['gone.html', 404], ['empty/', 404], ['broken', 500]]) {
+    assert.equal((await open(file)).status, status, file);
+    assert.deepEqual(asked.splice(0), [`GET ${v2}/${file}`], file);
+  }
+});
+
+test('a clean URL a version asks for is found the same way, and redirected within the app\'s own paths', async () => {
+  const world = workerScope({ alive: ['frame-1'] });
+  const v2 = '/afterimage/versions/v2';
+  const asked = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200 });
+  const { listeners } = startWorker(world);
+  await navigateTo(listeners, 'v2', 'frame-1');
+  asked.splice(0);
+
+  // Next's static export checks a page with HEAD /about before it prefetches the page's data.
+  const about = await dispatch(listeners, { url: `${origin}/about`, method: 'HEAD', mode: 'cors', clientId: 'frame-1' });
+  assert.equal(about.status, 200);
+  assert.equal(about.url, '');
+  assert.deepEqual(asked.splice(0), [`HEAD ${v2}/about`, `HEAD ${v2}/about.html`]);
+  // The redirect goes to the path the page uses, so the browser follows it back through the worker.
+  const docs = await dispatch(listeners, { url: `${origin}/docs`, mode: 'cors', clientId: 'frame-1' });
+  assert.equal(docs.status, 301);
+  assert.equal(docs.headers.get('Location'), `${origin}/docs/`);
+  assert.equal((await dispatch(listeners, { url: `${origin}/api/missing`, mode: 'cors', clientId: 'frame-1' })).status, 404);
 });
 
 test('when the Cache API fails, requests still go through instead of failing', async () => {

@@ -1,0 +1,22 @@
+{
+  "name": "afterimage-example-next-static",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Afterimage example: a Next.js App Router site built with output: 'export', two pages and two saved versions.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "afterimage:save": "afterimage save",
+    "afterimage:dev": "afterimage dev",
+    "afterimage:build": "afterimage build"
+  },
+  "dependencies": {
+    "next": "16.4.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "afterimage-cli": "file:../.."
+  }
+}

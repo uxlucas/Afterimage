@@ -1,0 +1,8 @@
+{
+  "source": "out",
+  "build": "npm run build",
+  "history": "afterimage",
+  "out": ".afterimage/site",
+  "exclude": [],
+  "type": "next-static"
+}

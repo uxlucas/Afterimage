@@ -1,0 +1,25 @@
+{
+  "name": "afterimage-example-astro",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Afterimage example: a multi-page Astro site with a scoped-style component and two saved versions.",
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "afterimage:save": "afterimage save",
+    "afterimage:dev": "afterimage dev",
+    "afterimage:build": "afterimage build"
+  },
+  "dependencies": {
+    "astro": "7.4.4"
+  },
+  "devDependencies": {
+    "afterimage-cli": "file:../.."
+  }
+}
