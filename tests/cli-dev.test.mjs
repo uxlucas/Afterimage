@@ -124,27 +124,64 @@ test('dev serves the history at /afterimage/ from its own folder and never touch
   assert.equal(await exists(path.join(root, '.afterimage/site')), false);
 });
 
-test('a busy port moves to the next free one', async t => {
+// A free port whose neighbour is free too, held on `host`. Returns null when this machine cannot listen on that host.
+async function holdPort(host) {
+  for (;;) {
+    const holder = net.createServer();
+    try {
+      await new Promise((resolve, reject) => holder.once('error', reject).listen(0, host, resolve));
+    } catch (error) {
+      if (['EAFNOSUPPORT', 'EADDRNOTAVAIL'].includes(error.code)) return null;
+      throw error;
+    }
+    const port = holder.address().port;
+    const neighbour = net.createServer();
+    const free = await new Promise(resolve => neighbour.once('error', () => resolve(false)).listen(port + 1, host, () => resolve(true)));
+    if (free) await new Promise(resolve => neighbour.close(resolve));
+    if (free) return { holder, port };
+    await new Promise(resolve => holder.close(resolve));
+  }
+}
+
+// Windows lets 127.0.0.1 bind while another server holds the same port on a wildcard or IPv6 address, so each way of
+// holding a port is tested.
+for (const host of ['127.0.0.1', '0.0.0.0', '::', '::1']) {
+  test(`a port held on ${host} moves to the next free one`, async t => {
+    const held = await holdPort(host);
+    if (!held) return t.skip(`${host} is not available here`);
+    t.after(() => new Promise(resolve => held.holder.close(resolve)));
+    const dirs = await fixtures(t);
+    const root = await project(t);
+
+    const { dev } = await start(t, root, dirs, { port: held.port });
+    assert.equal(new URL(dev.url).port, String(held.port + 1));
+    assert.equal((await get(dev, '/afterimage/')).status, 200);
+  });
+}
+
+test('a request path that cannot be decoded, or holds a NUL, gets 400 and logs nothing', async t => {
   const dirs = await fixtures(t);
   const root = await project(t);
-  // Find two neighbouring free ports: hold the first one, and check the second is free before relying on it.
-  let holder;
-  let port;
-  for (;;) {
-    const probe = net.createServer();
-    await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
-    port = probe.address().port;
-    const neighbour = net.createServer();
-    const free = await new Promise(resolve => neighbour.once('error', () => resolve(false)).listen(port + 1, '127.0.0.1', () => resolve(true)));
-    if (free) await new Promise(resolve => neighbour.close(resolve));
-    if (free) { holder = probe; break; }
-    await new Promise(resolve => probe.close(resolve));
-  }
-  t.after(() => new Promise(resolve => holder.close(resolve)));
+  const { dev } = await start(t, root, dirs);
+  const logged = [];
+  t.mock.method(console, 'error', (...args) => logged.push(args));
+  assert.equal((await get(dev, '/afterimage/%00')).status, 400);
+  assert.equal((await get(dev, '/afterimage/versions/%E0%A4%A')).status, 400);
+  assert.deepEqual(logged, []);
+});
 
-  const { dev } = await start(t, root, dirs, { port });
-  assert.equal(new URL(dev.url).port, String(port + 1));
-  assert.equal((await get(dev, '/afterimage/')).status, 200);
+test('several quick writes to versions.json produce one update', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t);
+  const { events } = await start(t, root, dirs, { debounceMs: 300 });
+  const manifestFile = path.join(root, 'afterimage/versions.json');
+  const bytes = await fs.readFile(manifestFile);
+  for (let i = 0; i < 5; i++) await fs.writeFile(manifestFile, bytes);
+  await until(() => events.updates.length > 0, 'dev to notice the writes');
+  // Anything the burst had left over would arrive within another debounce or two.
+  await new Promise(resolve => setTimeout(resolve, 700));
+  assert.equal(events.updates.length, 1);
+  assert.deepEqual(events.errors, []);
 });
 
 test('a save made while dev runs shows up without restarting it', async t => {

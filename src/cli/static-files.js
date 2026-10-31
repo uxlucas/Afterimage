@@ -4,10 +4,12 @@ import path from 'node:path';
 
 const TYPES = { html: 'text/html', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', ico: 'image/x-icon', woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf', mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', wasm: 'application/wasm', txt: 'text/plain' };
 
-// The decoded path of a request URL, or null when it can't be decoded.
+// The decoded path of a request URL, or null when it can't be decoded or holds a NUL byte (no file has one, and
+// the file system would throw on it).
 export function requestPath(url) {
   try {
-    return decodeURIComponent(new URL(url, 'http://localhost').pathname);
+    const decoded = decodeURIComponent(new URL(url, 'http://localhost').pathname);
+    return decoded.includes('\0') ? null : decoded;
   } catch {
     return null;
   }

@@ -23,7 +23,7 @@
   "scripts": {
     "build:viewer": "node scripts/build-viewer.mjs",
     "install:examples": "node scripts/install-examples.mjs",
-    "pretest:e2e": "npm run install:examples",
+    "pretest:e2e": "npm run build:viewer && npm run install:examples",
     "prepack": "npm run build:viewer",
     "test": "node --test \"tests/*.test.mjs\"",
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\""

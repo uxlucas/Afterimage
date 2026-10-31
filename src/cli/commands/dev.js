@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readConfig } from '../config.js';
@@ -17,9 +18,22 @@ const servedPath = '/afterimage/';
 
 const count = versions => `${versions} ${versions === 1 ? 'version' : 'versions'}`;
 
+// Windows lets a bind on 127.0.0.1 succeed even while another server holds 0.0.0.0, :: or ::1 on the same port (Astro's
+// default is 4321 too), so ask whether anything answers on either loopback address before binding. A refused connect or
+// a missing address (no IPv6) means nothing is there; a connect that hangs is treated as taken.
+const answers = (port, host) => new Promise(resolve => {
+  const socket = net.connect({ port, host });
+  const done = taken => { socket.destroy(); resolve(taken); };
+  socket.setTimeout(300, () => done(true));
+  socket.once('connect', () => done(true));
+  socket.once('error', () => done(false));
+});
+const isTaken = async port => (await Promise.all(['127.0.0.1', '::1'].map(host => answers(port, host)))).some(Boolean);
+
 // Listens on the first free port from `start`. Port 0 asks the system for any free one.
 async function listen(server, start) {
   for (let port = start; port < start + (start === 0 ? 1 : portAttempts) && port <= 65535; port++) {
+    if (port !== 0 && await isTaken(port)) continue;
     try {
       await new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -39,7 +53,8 @@ async function listen(server, start) {
 
 // Assembles the viewer and the saved history (not the app) into .afterimage/dev, serves it, and re-assembles when
 // versions.json changes. A failed refresh goes to onError and the last good site keeps serving.
-// Returns { url, versions, close }; close stops the server and the watcher and waits for a refresh in flight.
+// Returns { url, versions, warnings, close }: warnings are from the first assemble, and close stops the server and
+// the watcher and waits for a refresh in flight.
 export async function startDev({ projectDir, config, port = defaultPort, viewerDir, runtimeDir, debounceMs = 150, onUpdate = () => {}, onError = () => {} }) {
   const devConfig = { ...config, out: devOut };
   const assemble = () => assembleSite({ projectDir, config: devConfig, viewerDir, runtimeDir, includeApp: false });
@@ -57,6 +72,11 @@ export async function startDev({ projectDir, config, port = defaultPort, viewerD
   const boundPort = await listen(server, port);
 
   let closed = false;
+  const stopServer = () => new Promise(resolve => {
+    server.close(resolve);
+    // A browser's keep-alive connection would otherwise hold the server open.
+    server.closeAllConnections();
+  });
   let timer = null;
   let refreshing = null;
   let again = false;
@@ -82,11 +102,18 @@ export async function startDev({ projectDir, config, port = defaultPort, viewerD
   };
 
   // A save publishes versions.json last, so it is the one file whose change means "the history is complete".
-  const watcher = fs.watch(path.resolve(projectDir, config.history), (event, name) => {
-    if (closed || (name && String(name) !== 'versions.json')) return;
-    clearTimeout(timer);
-    timer = setTimeout(refresh, debounceMs);
-  });
+  let watcher;
+  try {
+    watcher = fs.watch(path.resolve(projectDir, config.history), (event, name) => {
+      if (closed || (name && String(name) !== 'versions.json')) return;
+      clearTimeout(timer);
+      timer = setTimeout(refresh, debounceMs);
+    });
+  } catch (error) {
+    // The server is already listening; do not leave its port held.
+    await stopServer();
+    throw error;
+  }
   watcher.on('error', error => { if (!closed) onError(error); });
 
   const close = async () => {
@@ -94,15 +121,11 @@ export async function startDev({ projectDir, config, port = defaultPort, viewerD
     closed = true;
     clearTimeout(timer);
     watcher.close();
-    await new Promise(resolve => {
-      server.close(resolve);
-      // A browser's keep-alive connection would otherwise hold the server open.
-      server.closeAllConnections();
-    });
+    await stopServer();
     await refreshing;
   };
 
-  return { url: `http://localhost:${boundPort}${servedPath}`, versions: first.versions, close };
+  return { url: `http://localhost:${boundPort}${servedPath}`, versions: first.versions, warnings: first.warnings, close };
 }
 
 // Resolves on Ctrl-C (or a terminate), or when a caller's signal aborts, which is how tests stop it.
@@ -158,6 +181,7 @@ export async function run(args, { cwd, stdout, stderr, viewerDir, runtimeDir, si
     },
     onError: error => stderr.write(`Could not update the history: ${error.message}\nStill serving the last good copy.\n`)
   });
+  for (const warning of dev.warnings) stderr.write(`${warning}\n`);
   stdout.write(`Afterimage is running at ${dev.url}\n`);
   stdout.write('Your app keeps running on its own dev server; this only serves the history.\n');
   await untilStopped(signal);

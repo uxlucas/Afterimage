@@ -25,3 +25,7 @@ test('a request path is decoded, and one that cannot be decoded is null', () => 
   assert.equal(requestPath('/versions/v1/a%20b.png?x=1'), '/versions/v1/a b.png');
   assert.equal(requestPath('/%E0%A4%A'), null);
 });
+
+test('a path with a NUL byte is refused like one that cannot be decoded', () => {
+  assert.equal(requestPath('/versions/v1/a%00.png'), null);
+});

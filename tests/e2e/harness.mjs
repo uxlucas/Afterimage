@@ -6,8 +6,12 @@
 //   - the pill button named "Highlight changes, N changes", which appears once the live review is ready
 //   - the "Show versions" button, which opens the panel (role dialog)
 //   - in the panel, the button "N changes from vA to vB" (aria-expanded), which opens the list named "Changes"
-//   - the list's role=listitem rows, each holding one change
+//   - the list's role=listitem rows, each holding one change, and the data-kind on its button (added, changed, removed)
 //   - the iframe[data-role="target"] that holds the shown version
+//
+// expectChange is text the newest version adds or changes; it must appear in an Added or Changed row of the list.
+// A Removed row does not count: text that left the page is not what the newest version shows.
+// A version's frame passes when its body has visible text (trimmed innerText) and at least one element.
 // If the viewer renames those labels, this is the one file to update.
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
@@ -86,7 +90,7 @@ async function readFrame(page, version) {
   return page.evaluate(() => {
     const doc = document.querySelector('iframe[data-role="target"]').contentDocument;
     const visibleText = doc.body.innerText.trim();
-    return { text: visibleText, hasContent: visibleText.length > 0 || Boolean(doc.body.querySelector('img, svg, canvas, video, input, button, iframe')), href: doc.location.href };
+    return { text: visibleText, hasContent: visibleText.length > 0 && doc.body.children.length > 0, href: doc.location.href };
   });
 }
 
@@ -137,18 +141,19 @@ export async function checkExample(exampleDir, { expectChange }) {
     await highlight.click();
     await page.getByRole('button', { name: /^Show versions$|\. Show versions$/ }).first().click();
     const dialog = page.getByRole('dialog');
-    const summary = dialog.getByRole('button', { name: new RegExp(`^\\d+ changes? from v\\d+ to v\\d+$`) });
+    const summary = dialog.getByRole('button', { name: new RegExp(`^\\d+ changes? from ${previous.id} to ${newest.id}$`) });
     await summary.waitFor({ timeout: loadTimeout });
     const count = Number(/^(\d+)/.exec(text(await summary.innerText()))[1]);
     assert.ok(count > 0, `Expected changes between ${previous.id} and ${newest.id}, the viewer found ${count}`);
     if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click();
     const list = dialog.getByRole('list', { name: 'Changes' });
     await list.waitFor({ timeout: loadTimeout });
-    const rows = (await list.getByRole('listitem').allInnerTexts()).map(text);
+    const rows = (await list.getByRole('listitem').locator('button[data-kind]').evaluateAll(buttons => buttons.map(button => ({ kind: button.dataset.kind, text: button.innerText })))).map(row => ({ kind: row.kind, text: text(row.text) }));
     assert.ok(rows.length > 0, 'The change list has no rows');
-    assert.ok(rows.some(row => row.includes(expectChange)), `Expected the change list to mention "${expectChange}". It lists:\n${rows.join('\n')}`);
+    const listing = rows.map(row => `[${row.kind}] ${row.text}`).join('\n');
+    assert.ok(rows.some(row => row.kind !== 'removed' && row.text.includes(expectChange)), `Expected an added or changed row to mention "${expectChange}". The list has:\n${listing}`);
     noFailures(`Changes ${previous.id} to ${newest.id}`);
-    report.changes = { from: previous.id, to: newest.id, count, rows };
+    report.changes = { from: previous.id, to: newest.id, count, rows: rows.map(row => row.text) };
 
     return report;
   } finally {
