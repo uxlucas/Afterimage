@@ -23,6 +23,9 @@ const skillHint = 'Agent skill: node_modules/afterimage-cli/agents/skill/ (copy 
 
 const nextStep = 'Next: npx afterimage save "First version"';
 
+// Windows editors often save JSON with a byte order mark. JSON.parse rejects it, so it is split off and put back.
+const bomMark = '﻿';
+
 async function readText(file) {
   try {
     return await fs.readFile(file, 'utf8');
@@ -30,6 +33,14 @@ async function readText(file) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+// → { bom, body } with body null when the file does not exist.
+async function readJsonText(file) {
+  const raw = await readText(file);
+  if (raw === null) return { bom: '', body: null };
+  const bom = raw.startsWith(bomMark) ? bomMark : '';
+  return { bom, body: raw.slice(bom.length) };
 }
 
 async function isFolder(file) {
@@ -64,15 +75,19 @@ function writePackageText(original, value) {
   return original === null || /\n$/.test(original) ? text + eol : text;
 }
 
-// Reads one answer from the terminal. Tests pass their own ctx.ask.
+// Reads one answer from the terminal. A closed stdin (Ctrl-D, EOF) counts as no answer instead of hanging.
+// Tests pass their own ctx.ask.
 async function askInTerminal(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const closed = new Promise(resolve => rl.once('close', () => resolve('')));
   try {
-    return await rl.question(`${question} `);
+    return await Promise.race([rl.question(`${question} `), closed]);
   } finally {
     rl.close();
   }
 }
+
+const needSource = reason => new Error(`${reason}\nSay where the prototype is: afterimage init --source <folder>\nAdd --build "<command>" if a build command produces that folder.`);
 
 // Decides source, build and type for a fresh config. Flags win over detection. A given source keeps detection's type
 // when it names the same folder; otherwise the type is 'plain' for a folder of static files (no build) and 'unknown'
@@ -84,11 +99,9 @@ async function chooseSetup(cwd, flags, { isTTY, ask }) {
   }
   let source = flags.source;
   if (!source && detection.source === null) {
-    if (!isTTY) {
-      throw new Error(`${detection.reason}\nSay where the prototype is: afterimage init --source <folder>\nAdd --build "<command>" if a build command produces that folder.`);
-    }
+    if (!isTTY) throw needSource(detection.reason);
     source = (await ask('Which folder holds your prototype, or which folder does your build write to?')).trim();
-    if (!source) throw new Error('No folder given, so nothing was set up.');
+    if (!source) throw needSource(detection.reason);
   }
   if (!source) {
     return { source: detection.source, build: flags.build ?? detection.build, type: detection.type };
@@ -108,33 +121,41 @@ function projectRelative(cwd, folder) {
   return relative || '.';
 }
 
-async function setupConfig(cwd, flags, ctx) {
-  const file = path.join(cwd, configName);
-  const before = await readText(file);
+// Every step is split in two. A plan only reads and asks, and returns { change, notes, apply }. Nothing is written
+// until every plan has succeeded, so a bad input leaves the project exactly as it was.
+const writer = (file, text) => () => fs.writeFile(file, text);
+
+async function planConfig(cwd, flags, ctx) {
+  const before = await readText(path.join(cwd, configName));
   if (before !== null && !flags.source && flags.build === undefined) {
-    return { config: await readConfig(cwd), change: null };
+    return { config: await readConfig(cwd), change: null, notes: [], apply: null };
   }
+  const existing = before === null ? null : await readConfig(cwd);
   let config;
-  if (before !== null) {
-    const existing = await readConfig(cwd);
+  if (existing) {
     config = { ...existing, source: flags.source ? projectRelative(cwd, flags.source) : existing.source, build: flags.build ?? existing.build };
   } else {
     const chosen = await chooseSetup(cwd, flags, ctx);
     config = { source: projectRelative(cwd, chosen.source), build: chosen.build, history: 'afterimage', out: '.afterimage/site', exclude: [], type: chosen.type };
   }
   if (!config.build && !await isFolder(path.resolve(cwd, config.source))) {
-    throw new Error(`${config.source} is not a folder here. Pass the folder that holds your prototype, or add --build "<command>" if a build creates it.`);
+    throw new Error(`${config.source} does not exist yet. If a build creates it, run init again with --build "<command>"; otherwise check the folder name.`);
   }
-  await writeConfig(cwd, config);
-  const after = await readText(file);
+  if (existing && existing.source === config.source && existing.build === config.build) {
+    return { config, change: null, notes: [], apply: null };
+  }
   const detail = `source ${config.source}${config.build ? `, build "${config.build}"` : ''}`;
-  if (before === null) return { config, change: `Created ${configName} (${detail})` };
-  return { config, change: before === after ? null : `Updated ${configName} (${detail})` };
+  return {
+    config,
+    change: `${existing ? 'Updated' : 'Created'} ${configName} (${detail})`,
+    notes: [],
+    apply: () => writeConfig(cwd, config)
+  };
 }
 
-async function setupPackage(cwd) {
+async function planPackage(cwd) {
   const file = path.join(cwd, 'package.json');
-  const before = await readText(file);
+  const { bom, body: before } = await readJsonText(file);
   const manifest = before === null ? { private: true, scripts: {} } : parseJson(before, 'package.json');
   if (manifest.scripts !== undefined && (!manifest.scripts || typeof manifest.scripts !== 'object' || Array.isArray(manifest.scripts))) {
     throw new Error('package.json "scripts" must be an object.\nFix it, then run "afterimage init" again.');
@@ -145,24 +166,30 @@ async function setupPackage(cwd) {
   if (Object.hasOwn(existing, 'afterimage:build') && existing['afterimage:build'] !== scripts['afterimage:build']) {
     notes.push(`package.json already has "afterimage:build": "${existing['afterimage:build']}". The host config runs that script, so it should be "${scripts['afterimage:build']}".`);
   }
-  if (!added.length) return { change: null, notes };
+  if (!added.length) return { change: null, notes, apply: null };
   manifest.scripts = { ...existing, ...Object.fromEntries(added.map(name => [name, scripts[name]])) };
-  await fs.writeFile(file, writePackageText(before, manifest));
   const what = `added ${plural(added.length, 'script')}`;
-  return { change: before === null ? `Created package.json (${what})` : `Updated package.json (${what})`, notes };
+  return {
+    change: `${before === null ? 'Created' : 'Updated'} package.json (${what})`,
+    notes,
+    apply: writer(file, bom + writePackageText(before, manifest))
+  };
 }
 
 // Adds each line that is not already there, in the file's own line ending.
-async function appendLines(cwd, name, lines, isPresent) {
+async function planLines(cwd, name, lines, isPresent) {
   const file = path.join(cwd, name);
   const before = await readText(file);
   const present = (before ?? '').split(/\r?\n/);
   const added = lines.filter(line => !present.some(existing => isPresent(existing, line)));
-  if (!added.length) return null;
+  if (!added.length) return { change: null, notes: [], apply: null };
   const eol = before?.includes('\r\n') ? '\r\n' : '\n';
   const gap = before && !/\n$/.test(before) ? eol : '';
-  await fs.writeFile(file, `${before ?? ''}${gap}${added.join(eol)}${eol}`);
-  return before === null ? `Created ${name}` : `Updated ${name} (added ${added.join(', ')})`;
+  return {
+    change: before === null ? `Created ${name}` : `Updated ${name} (added ${added.join(', ')})`,
+    notes: [],
+    apply: writer(file, `${before ?? ''}${gap}${added.join(eol)}${eol}`)
+  };
 }
 
 // A rule counts as present when the pattern is there with -text, however the rest of the line reads.
@@ -174,46 +201,51 @@ const hasTextRule = (existing, rule) => {
 const stripSlashes = line => line.trim().replace(/^\/+|\/+$/g, '');
 const hasIgnore = (existing, line) => stripSlashes(existing) === stripSlashes(line);
 
-const hostValues = `  "buildCommand": "${hostBuild}"\n  "outputDirectory": "${hostOutput}"`;
+const hostValues = `  "buildCommand": "${hostBuild}",\n  "outputDirectory": "${hostOutput}"`;
 
-async function setupVercel(cwd, { isTTY, ask }) {
+async function planVercel(cwd, { isTTY, ask }) {
   const file = path.join(cwd, 'vercel.json');
-  const before = await readText(file);
+  const { bom, body: before } = await readJsonText(file);
   const wanted = { buildCommand: hostBuild, outputDirectory: hostOutput };
   const settings = before === null ? {} : parseJson(before, 'vercel.json');
   // null means "use the default" in vercel.json, so it is as free as a missing key.
   const differs = Object.keys(wanted).filter(key => settings[key] != null && settings[key] !== wanted[key]);
   const missing = Object.keys(wanted).filter(key => settings[key] == null);
-  if (!differs.length && !missing.length) return { change: null, notes: [] };
+  if (!differs.length && !missing.length) return { change: null, notes: [], apply: null };
 
   if (differs.length) {
-    const question = differs.includes('buildCommand')
-      ? `vercel.json already builds with ${settings.buildCommand}. Switch it to Afterimage's build? (y/N)`
-      : `vercel.json already serves ${settings.outputDirectory}. Switch it to Afterimage's output? (y/N)`;
+    // One yes switches both keys, so a question about only one would hide the other change.
+    const question = differs.length === 2
+      ? `vercel.json builds with ${settings.buildCommand} and serves ${settings.outputDirectory}. Switch both to Afterimage's? (y/N)`
+      : differs[0] === 'buildCommand'
+        ? `vercel.json already builds with ${settings.buildCommand}. Switch it to Afterimage's build? (y/N)`
+        : `vercel.json already serves ${settings.outputDirectory}. Switch it to Afterimage's output? (y/N)`;
     const agreed = isTTY && /^y(es)?$/i.test((await ask(question)).trim());
     if (!agreed) {
-      return { change: null, notes: [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${hostValues.replace(/\n/g, ',\n')}`] };
+      return { change: null, notes: [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${hostValues}`], apply: null };
     }
   }
-  await fs.writeFile(file, `${JSON.stringify({ ...settings, ...wanted }, null, 2)}
-`);
-  return { change: before === null ? 'Created vercel.json' : 'Updated vercel.json (set buildCommand, outputDirectory)', notes: [] };
+  return {
+    change: before === null ? 'Created vercel.json' : 'Updated vercel.json (set buildCommand, outputDirectory)',
+    notes: [],
+    apply: writer(file, `${bom}${JSON.stringify({ ...settings, ...wanted }, null, 2)}\n`)
+  };
 }
 
-async function setupNetlify(cwd) {
+async function planNetlify(cwd) {
   const file = path.join(cwd, 'netlify.toml');
   const before = await readText(file);
   if (before === null) {
-    await fs.writeFile(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`);
-    return { change: 'Created netlify.toml', notes: [] };
+    return { change: 'Created netlify.toml', notes: [], apply: writer(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`) };
   }
   // TOML is not parsed or rewritten here: a hand edit is safer than a guessed merge.
   const hasCommand = new RegExp(`^\\s*command\\s*=\\s*["']${hostBuild}["']`, 'm').test(before);
   const hasPublish = new RegExp(`^\\s*publish\\s*=\\s*["']${hostOutput.replace('.', '\\.')}["']`, 'm').test(before);
-  if (hasCommand && hasPublish) return { change: null, notes: [] };
+  if (hasCommand && hasPublish) return { change: null, notes: [], apply: null };
   return {
     change: null,
-    notes: [`netlify.toml already exists, so Afterimage left it alone. Under [build], set:\n  command = "${hostBuild}"\n  publish = "${hostOutput}"`]
+    notes: [`netlify.toml already exists, so Afterimage left it alone. Under [build], set:\n  command = "${hostBuild}"\n  publish = "${hostOutput}"`],
+    apply: null
   };
 }
 
@@ -240,21 +272,26 @@ export async function run(args, ctx) {
     return 2;
   }
 
-  // Detection reads package.json, so it runs before init creates one.
-  const { config, change: configChange } = await setupConfig(cwd, flags, prompt);
-  const steps = [
-    { change: configChange, notes: [] },
-    await setupPackage(cwd),
-    { change: await appendLines(cwd, '.gitattributes', [`${config.history}/** -text`], hasTextRule), notes: [] },
-    { change: await appendLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore), notes: [] },
-    await setupVercel(cwd, prompt),
-    await setupNetlify(cwd)
+  // Plan first, write after. package.json is read before the config step so a bad one stops init before any question,
+  // and detection (which reads package.json) still sees the project as it was.
+  const packagePlan = await planPackage(cwd);
+  const configPlan = await planConfig(cwd, flags, prompt);
+  const plans = [
+    configPlan,
+    packagePlan,
+    await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
+    await planLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore),
+    await planVercel(cwd, prompt),
+    await planNetlify(cwd)
   ];
-  const changes = steps.map(step => step.change).filter(Boolean);
-  const notes = steps.flatMap(step => step.notes);
+  for (const plan of plans) await plan.apply?.();
 
-  stdout.write(changes.length ? `${changes.join('\n')}\n` : 'Everything is already set up. Nothing changed.\n');
-  if (notes.length) stdout.write(`\n${notes.join('\n\n')}\n`);
+  const changes = plans.map(plan => plan.change).filter(Boolean);
+  const notes = plans.flatMap(plan => plan.notes);
+
+  if (changes.length) stdout.write(`${changes.join('\n')}\n`);
+  else stdout.write(notes.length ? 'No files changed. Still left for you:\n' : 'Everything is already set up. Nothing changed.\n');
+  if (notes.length) stdout.write(`${changes.length ? '\n' : ''}${notes.join('\n\n')}\n`);
   stdout.write(`\n${skillHint}\n${nextStep}\n`);
   return 0;
 }

@@ -6,7 +6,8 @@ const unknown = reason => found('unknown', null, null, reason);
 
 async function readText(file) {
   try {
-    return await fs.readFile(file, 'utf8');
+    // A byte order mark (common from Windows editors) would make a valid package.json fail JSON.parse.
+    return (await fs.readFile(file, 'utf8')).replace(/^﻿/, '');
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;

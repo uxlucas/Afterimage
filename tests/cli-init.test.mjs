@@ -172,7 +172,7 @@ test('a different vercel.json build is switched only after the user says yes', a
   await write(root, 'vercel.json', original);
 
   const declined = await run(root, [], { answers: ['n'] });
-  assert.deepEqual(declined.questions, ["vercel.json already builds with npm run build. Switch it to Afterimage's build? (y/N)"]);
+  assert.deepEqual(declined.questions, ["vercel.json builds with npm run build and serves dist. Switch both to Afterimage's? (y/N)"]);
   assert.equal(await read(root, 'vercel.json'), original);
   assert.match(declined.stdout, /Left vercel\.json as it is/);
 
@@ -200,9 +200,37 @@ test('a vercel.json that is not JSON stops init before anything is written', asy
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
   await write(root, 'vercel.json', '{ nope');
+  const before = await snapshot(root);
   const result = await run(root);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /vercel\.json is not valid JSON/);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+// --source skips the unknown stop, so only the package.json check can fail these runs.
+for (const [title, packageText, message] of [
+  ['is not JSON', '{ nope', /package\.json is not valid JSON/],
+  ['is not an object', '[]', /package\.json must be a JSON object/],
+  ['has scripts that are not an object', JSON.stringify({ scripts: 'nope' }), /"scripts" must be an object/]
+]) {
+  test(`a package.json that ${title} stops init before anything is written`, async t => {
+    const root = await temp(t);
+    await fs.mkdir(path.join(root, 'site'));
+    await write(root, 'package.json', packageText);
+    const before = await snapshot(root);
+    const result = await run(root, ['--source', 'site']);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, message);
+    assert.deepEqual(await snapshot(root), before);
+  });
+}
+
+test('a bad package.json stops init before it asks anything', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', '{ nope');
+  const result = await run(root, [], { answers: ['site'] });
+  assert.equal(result.code, 1);
+  assert.deepEqual(result.questions, []);
 });
 
 test('an existing netlify.toml is never rewritten', async t => {
@@ -279,7 +307,7 @@ test('--source without a build needs the folder to exist', async t => {
   const root = await temp(t);
   const result = await run(root, ['--source', 'nowhere']);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /nowhere is not a folder here/);
+  assert.match(result.stderr, /nowhere does not exist yet\. If a build creates it/);
   assert.equal(await exists(root, 'afterimage.config.json'), false);
 });
 
@@ -323,6 +351,7 @@ test('an empty answer stops without writing anything', async t => {
   const root = await temp(t);
   const result = await run(root, [], { answers: [''] });
   assert.equal(result.code, 1);
+  assert.match(result.stderr, /afterimage init --source <folder>/);
   assert.deepEqual(Object.keys(await snapshot(root)), []);
 });
 
@@ -351,4 +380,125 @@ test('an unknown flag is a usage error', async t => {
   const result = await run(root, ['--nope']);
   assert.equal(result.code, 2);
   assert.match(result.stderr, /Usage: afterimage init/);
+});
+
+test('both vercel.json values differing are named in one question', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'vercel.json', JSON.stringify({ buildCommand: 'npm run build', outputDirectory: 'dist' }));
+  const result = await run(root, [], { answers: ['n'] });
+  assert.match(result.questions[0], /builds with npm run build and serves dist/);
+});
+
+test('only outputDirectory differing asks about the output', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'vercel.json', JSON.stringify({ outputDirectory: 'dist' }));
+  const result = await run(root, [], { answers: ['n'] });
+  assert.deepEqual(result.questions, ["vercel.json already serves dist. Switch it to Afterimage's output? (y/N)"]);
+});
+
+test('a closed terminal answers no to the vercel question and still reports', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  const original = JSON.stringify({ buildCommand: 'npm run build' }) + '\n';
+  await write(root, 'vercel.json', original);
+  const result = await run(root, [], { answers: [] });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await read(root, 'vercel.json'), original);
+  assert.match(result.stdout, /^Created afterimage\.config\.json/m);
+  assert.match(result.stdout, /Left vercel\.json as it is/);
+});
+
+test('a second run after a declined vercel.json does not claim everything is set up', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'vercel.json', JSON.stringify({ buildCommand: 'npm run build' }) + '\n');
+  assert.equal((await run(root)).code, 0);
+  const before = await snapshot(root);
+  const second = await run(root);
+  assert.equal(second.code, 0, second.stderr);
+  assert.deepEqual(await snapshot(root), before);
+  assert.doesNotMatch(second.stdout, /already set up/);
+  assert.match(second.stdout, /^No files changed\. Still left for you:$/m);
+  assert.match(second.stdout, /Left vercel\.json as it is/);
+});
+
+test('a second run with an unmatched netlify.toml does not claim everything is set up', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'netlify.toml', '[build]\n  command = "npm run build"\n');
+  await run(root);
+  const second = await run(root);
+  assert.doesNotMatch(second.stdout, /already set up/);
+  assert.match(second.stdout, /netlify\.toml already exists/);
+});
+
+test('an answered folder that does not exist yet says a build can create it', async t => {
+  const root = await temp(t);
+  const result = await run(root, [], { answers: ['dist'] });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /dist does not exist yet\. If a build creates it, run init again with --build/);
+  assert.doesNotMatch(result.stderr, /Pass the folder/);
+  assert.deepEqual(Object.keys(await snapshot(root)), []);
+});
+
+test('a byte order mark in package.json is read and kept', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', '﻿' + JSON.stringify({ devDependencies: { vite: '1.0.0' } }, null, 2) + '\n');
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal((await readConfig(root)).type, 'vite');
+  const text = await read(root, 'package.json');
+  assert.ok(text.startsWith('﻿{'));
+  assert.equal(JSON.parse(text.slice(1)).scripts['afterimage:build'], 'afterimage build');
+  const before = await snapshot(root);
+  await run(root);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('a byte order mark in vercel.json is read and kept', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'vercel.json', '﻿{"cleanUrls": true}');
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+  const text = await read(root, 'vercel.json');
+  assert.ok(text.startsWith('﻿{'));
+  assert.deepEqual(JSON.parse(text.slice(1)), { cleanUrls: true, buildCommand: hostBuild, outputDirectory: hostOutput });
+});
+
+test('a CRLF package.json keeps its line endings and a second run changes nothing', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', '{\r\n  "devDependencies": { "vite": "1.0.0" }\r\n}\r\n');
+  assert.equal((await run(root)).code, 0);
+  const text = await read(root, 'package.json');
+  assert.ok(!/(^|[^\r])\n/.test(text), 'every newline is CRLF');
+  assert.ok(text.endsWith('}\r\n'));
+  assert.equal(JSON.parse(text).scripts['afterimage:save'], 'afterimage save');
+  const before = await snapshot(root);
+  await run(root);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('a 4-space package.json with no final newline keeps both', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', '{\n    "devDependencies": { "vite": "1.0.0" }\n}');
+  assert.equal((await run(root)).code, 0);
+  const text = await read(root, 'package.json');
+  assert.match(text, /^ {4}"scripts": \{$/m);
+  assert.match(text, /^ {8}"afterimage:save"/m);
+  assert.ok(text.endsWith('}'));
+  assert.equal(JSON.parse(text).scripts['afterimage:build'], 'afterimage build');
+});
+
+test('next with a server and --source, without a TTY, uses the folder given', async t => {
+  const root = await temp(t);
+  await fs.mkdir(path.join(root, 'static'));
+  await write(root, 'package.json', JSON.stringify({ dependencies: { next: '15.0.0' } }));
+  await write(root, 'next.config.mjs', 'export default {};\n');
+  const result = await run(root, ['--source', 'static']);
+  assert.equal(result.code, 0, result.stderr);
+  const config = await readConfig(root);
+  assert.deepEqual({ source: config.source, build: config.build, type: config.type }, { source: 'static', build: null, type: 'plain' });
 });
