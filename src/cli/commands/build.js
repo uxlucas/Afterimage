@@ -21,7 +21,8 @@ export async function run(args, { cwd, stdout, stderr, buildStdio, viewerDir, ru
   }
 
   const config = await readConfig(cwd);
-  const { versions } = await assembleSite({ projectDir: path.resolve(cwd), config, viewerDir, runtimeDir, buildStdio });
+  const { versions, warnings } = await assembleSite({ projectDir: path.resolve(cwd), config, viewerDir, runtimeDir, buildStdio });
+  for (const warning of warnings) stderr.write(`${warning}\n`);
   stdout.write(`Built ${config.out} with ${versions} ${versions === 1 ? 'version' : 'versions'}. Serve it from any static host; the history is at /afterimage/.\n`);
   return 0;
 }

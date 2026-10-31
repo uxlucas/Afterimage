@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -6,7 +6,7 @@ import path from 'node:path';
 import { main } from '../src/cli/main.js';
 import { writeConfig } from '../src/cli/config.js';
 import { readSnapshot, fingerprint } from '../src/cli/history.js';
-import { assembleSite } from '../src/cli/site.js';
+import { assembleSite, isSameOrInside } from '../src/cli/site.js';
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -51,6 +51,12 @@ async function project(t, config = configWith(copyBuild)) {
 
 const listing = async directory => (await fs.readdir(directory, { recursive: true })).map(name => name.replaceAll('\\', '/')).sort();
 const exists = target => fs.access(target).then(() => true, () => false);
+
+// Every path under a folder with its bytes, so a test can prove a folder is untouched.
+const tree = async directory => Object.fromEntries(await Promise.all((await listing(directory)).map(async name => {
+  const stat = await fs.stat(path.join(directory, name));
+  return [name, stat.isFile() ? (await fs.readFile(path.join(directory, name))).toString('base64') : null];
+})));
 
 // Two saved versions, the second with a nested file, CRLF text and bytes that are not valid text.
 async function twoVersions(t, config) {
@@ -104,8 +110,19 @@ test('an app that already has /afterimage stops the build', async t => {
   await fs.writeFile(path.join(root, 'dist/Afterimage/index.html'), 'mine');
   const result = await run(root, ['build'], dirs);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /already has an afterimage\/ folder/);
+  assert.match(result.stderr, /already has an afterimage file or folder/);
   assert.equal(await exists(path.join(root, '.afterimage')), false);
+});
+
+test('a file named afterimage stops the build with the collision message; afterimage.html does not', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.writeFile(path.join(root, 'dist/afterimage.html'), 'fine');
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  await fs.writeFile(path.join(root, 'dist/afterimage'), 'mine');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /already has an afterimage file or folder.*\/afterimage\//);
 });
 
 test('a changed saved version stops the build before anything is written', async t => {
@@ -160,10 +177,7 @@ test('a build that fails leaves the earlier site byte for byte', async t => {
   const root = await twoVersions(t);
   assert.equal((await run(root, ['build'], dirs)).code, 0);
   const site = path.join(root, '.afterimage/site');
-  const snapshot = async () => Object.fromEntries(await Promise.all((await listing(site)).map(async name => {
-    const stat = await fs.stat(path.join(site, name));
-    return [name, stat.isFile() ? (await fs.readFile(path.join(site, name))).toString('base64') : null];
-  })));
+  const snapshot = () => tree(site);
   const before = await snapshot();
 
   // The app build fails: nothing is staged yet.
@@ -250,16 +264,152 @@ test('a viewer that is not built says how to build it and writes nothing', async
   assert.equal(await exists(path.join(root, '.afterimage')), false);
 });
 
-test('an out folder that would replace the project or its history is refused', async t => {
+// Case-insensitive file systems (Windows, macOS) treat these spellings as the same folder.
+const ignoresCase = process.platform === 'win32' || process.platform === 'darwin';
+
+test('an out folder that would replace or sit inside the project, history or source is refused', async t => {
   const dirs = await fixtures(t);
   const root = await twoVersions(t);
-  for (const out of ['.', 'afterimage', 'dist']) {
+  const cases = [
+    ['.', /would replace/],
+    ['..', /would replace/],
+    ['afterimage', /would replace/],
+    ['afterimage/', /would replace/],
+    ['dist', /would replace/],
+    ['afterimage/versions', /inside the history folder/],
+    ['afterimage/site', /inside the history folder/],
+    ['dist/site', /inside the source folder/],
+    ...(ignoresCase ? [['AFTERIMAGE', /would replace/], ['AFTERIMAGE/versions', /inside the history folder/], ['DIST', /would replace/], ['Dist/Site', /inside the source folder/]] : []),
+  ];
+  const before = { history: await tree(path.join(root, 'afterimage')), source: await tree(path.join(root, 'dist')) };
+  for (const [out, message] of cases) {
     await writeConfig(root, configWith(copyBuild, { out }));
     const result = await run(root, ['build'], dirs);
     assert.equal(result.code, 1, out);
-    assert.match(result.stderr, /would replace/, out);
+    assert.match(result.stderr, message, out);
+    assert.deepEqual(await tree(path.join(root, 'afterimage')), before.history, `history untouched for ${out}`);
+    assert.deepEqual(await tree(path.join(root, 'dist')), before.source, `source untouched for ${out}`);
   }
-  assert.equal(await exists(path.join(root, 'afterimage/versions.json')), true);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+});
+
+test('a folder whose name starts with two dots is inside, not outside', () => {
+  const base = path.resolve('project');
+  assert.equal(isSameOrInside(path.join(base, '..cache', 'x'), path.join(base, '..cache')), true);
+  assert.equal(isSameOrInside(path.join(base, '..cache'), base), true);
+  assert.equal(isSameOrInside(base, base), true);
+  assert.equal(isSameOrInside(base, path.join(base, 'dist')), false);
+  assert.equal(isSameOrInside(path.resolve('other'), base), false);
+});
+
+test('an out folder of its own next to the source is allowed', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t, configWith(copyBuild, { out: 'public-site' }));
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  assert.equal(await exists(path.join(root, 'public-site/afterimage/versions.json')), true);
+});
+
+test('an out path that is a file is refused, not replaced', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await fs.mkdir(path.join(root, '.afterimage'));
+  await fs.writeFile(path.join(root, '.afterimage/site'), 'precious');
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /is not a folder/);
+  assert.equal(await fs.readFile(path.join(root, '.afterimage/site'), 'utf8'), 'precious');
+});
+
+test('stale staging folders from a crashed build are cleared, other names are left alone', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const parent = path.join(root, '.afterimage');
+  await fs.mkdir(path.join(parent, 'site.tmp-deadbeef'), { recursive: true });
+  await fs.writeFile(path.join(parent, 'site.tmp-deadbeef/leftover.txt'), 'x');
+  await fs.mkdir(path.join(parent, 'site.tmp-cafe0123.old'));
+  await fs.mkdir(path.join(parent, 'site.tmp-keepme'));
+  await fs.mkdir(path.join(parent, 'sitextmp-deadbeef'));
+  await fs.mkdir(path.join(parent, 'other.tmp-deadbeef'));
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  assert.deepEqual((await fs.readdir(parent)).sort(), ['other.tmp-deadbeef', 'site', 'site.tmp-keepme', 'sitextmp-deadbeef']);
+});
+
+// The swap steps aside the old site (rename 1), moves the new one in (rename 2) and restores on failure (rename 3).
+describe('the swap', () => {
+  const failing = (failAt, code) => {
+    let calls = 0;
+    const log = [];
+    return {
+      log,
+      fsOps: {
+        rename: async (from, to) => {
+          calls += 1;
+          log.push(calls);
+          if (failAt.includes(calls)) throw Object.assign(new Error(`${code}: injected`), { code });
+          return fs.rename(from, to);
+        },
+      },
+    };
+  };
+  async function builtProject(t) {
+    const dirs = await fixtures(t);
+    const root = await twoVersions(t);
+    assert.equal((await run(root, ['build'], dirs)).code, 0);
+    await fs.writeFile(path.join(root, 'page.txt'), '<h1>Three</h1>');
+    return { dirs, root, site: path.join(root, '.afterimage/site') };
+  }
+  const assemble = (root, dirs, extra) => assembleSite({ projectDir: root, config: configWith(copyBuild), ...dirs, buildStdio: 'ignore', ...extra });
+
+  test('a locked old site gives a clear message and stays as it was', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const before = await tree(site);
+    const { fsOps } = failing([1, 2], 'EPERM');
+    await assert.rejects(assemble(root, dirs, { fsOps }), /Could not replace \.afterimage\/site: a file in it is in use\. Close anything serving it \(like afterimage dev or a static server\) and run build again\. The previous site is unchanged\./);
+    assert.deepEqual(await tree(site), before);
+    assert.deepEqual(await fs.readdir(path.dirname(site)), ['site']);
+  });
+
+  test('a lock that clears on its own is retried once', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const { fsOps, log } = failing([1], 'EBUSY');
+    const result = await assemble(root, dirs, { fsOps });
+    assert.equal(result.versions, 2);
+    assert.deepEqual(log, [1, 2, 3]);
+    assert.equal(await fs.readFile(path.join(site, 'index.html'), 'utf8'), '<h1>Three</h1>');
+  });
+
+  test('when the new site cannot move in, the old one is restored', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const before = await tree(site);
+    const { fsOps } = failing([2], 'EXDEV');
+    await assert.rejects(assemble(root, dirs, { fsOps }), /EXDEV: injected/);
+    assert.deepEqual(await tree(site), before);
+    assert.deepEqual(await fs.readdir(path.dirname(site)), ['site'], 'no staging or .old folder is left');
+  });
+
+  test('when restoring fails too, the original error is kept and the old site location is named', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const { fsOps } = failing([2, 3], 'EXDEV');
+    await assert.rejects(assemble(root, dirs, { fsOps }), error => {
+      assert.match(error.message, /^EXDEV: injected/);
+      assert.match(error.message, /The previous site could not be put back; it was left at .*site\.tmp-[0-9a-f]{8}\.old\./);
+      return true;
+    });
+    const left = (await fs.readdir(path.dirname(site))).filter(name => name.endsWith('.old'));
+    assert.equal(left.length, 1);
+    assert.equal(await exists(path.join(path.dirname(site), left[0], 'index.html')), true);
+  });
+
+  test('failing to remove the old site warns and still builds', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const result = await assemble(root, dirs, { fsOps: { rm: async () => { throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' }); } } });
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /^Built, but could not remove the previous site at .*\.old: EBUSY: injected/);
+    assert.equal(await fs.readFile(path.join(site, 'index.html'), 'utf8'), '<h1>Three</h1>');
+    // The next build clears it.
+    assert.equal((await run(root, ['build'], dirs)).code, 0);
+    assert.deepEqual(await fs.readdir(path.dirname(site)), ['site']);
+  });
 });
 
 test('build outside a project points to init, and rejects stray arguments', async t => {

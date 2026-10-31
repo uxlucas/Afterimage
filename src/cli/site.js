@@ -12,28 +12,66 @@ export const packagedRuntimeDir = fileURLToPath(new URL('../runtime/', import.me
 
 const servedFolder = 'afterimage';
 const keep = { recursive: true, force: true, maxRetries: 3 };
+const lockedCodes = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const escapePattern = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const isInside = (parent, child) => {
-  const relative = path.relative(parent, child);
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-};
+// Windows and macOS ignore case by default, so two spellings of one folder must compare equal there.
+const fold = value => (process.platform === 'win32' || process.platform === 'darwin' ? value.toLowerCase() : value);
 
-// Out is replaced wholesale, so it must not be (or hold) anything that is not generated output.
-function checkOut(outDir, protectedDirs) {
-  for (const dir of protectedDirs) {
-    if (dir === outDir || isInside(outDir, dir)) {
-      throw new Error(`"out" (${outDir}) would replace ${dir}. Point "out" at a folder of its own.`);
-    }
+// True when child is parent or lies under it. A folder named "..x" is inside; only ".." itself leaves.
+export function isSameOrInside(child, parent) {
+  const relative = path.relative(fold(parent), fold(child));
+  return !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative));
+}
+
+// Out is replaced wholesale, so it must not be, hold or sit inside anything that is not generated output.
+function checkOut({ outDir, projectDir, historyDir, sourceDir, includeApp }) {
+  const replaces = dir => { throw new Error(`"out" (${outDir}) would replace ${dir}. Point "out" at a folder of its own.`); };
+  if (isSameOrInside(projectDir, outDir)) replaces(projectDir);
+  if (isSameOrInside(historyDir, outDir)) replaces(historyDir);
+  if (isSameOrInside(outDir, historyDir)) throw new Error(`"out" (${outDir}) is inside the history folder, where saved versions live. Point "out" at a folder of its own.`);
+  if (!includeApp) return;
+  if (isSameOrInside(sourceDir, outDir)) replaces(sourceDir);
+  // With the prototype at the project root, config.js already leaves out of the app; anywhere else it would copy itself.
+  if (!isSameOrInside(projectDir, sourceDir) && isSameOrInside(outDir, sourceDir)) {
+    throw new Error(`"out" (${outDir}) is inside the source folder, so each build would copy the last one into itself. Point "out" outside ${sourceDir}.`);
   }
+}
+
+// Leftovers of a build that crashed, matched by this file's own naming so nothing else is touched.
+async function removeStale(outDir) {
+  const pattern = new RegExp(`^${escapePattern(path.basename(outDir))}\\.tmp-[0-9a-f]{8}(\\.old)?$`);
+  try {
+    for (const name of await fs.readdir(path.dirname(outDir))) {
+      if (pattern.test(name)) await fs.rm(path.join(path.dirname(outDir), name), keep);
+    }
+  } catch { /* best effort */ }
+}
+
+const collision = () => new Error(`The app already has an ${servedFolder} file or folder, and Afterimage serves the history at /${servedFolder}/. Rename it or add it to exclude.`);
+
+// A top-level file called afterimage would stop readSnapshot with a less helpful message, so look for it first.
+async function checkCollision(sourceDir, excluded) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (entries.some(entry => !entry.isDirectory() && entry.name.toLowerCase() === servedFolder && !excluded.includes(entry.name))) throw collision();
 }
 
 // Builds the deployable site: the app at the root, the viewer and every saved version under /afterimage/.
 // With includeApp false (the dev server) only the afterimage/ folder is made. The old out stays in place until the
 // new one is complete, so a failure anywhere leaves the previous site untouched.
-export async function assembleSite({ projectDir, config, viewerDir = packagedViewerDir, runtimeDir = packagedRuntimeDir, includeApp = true, buildStdio }) {
+// Returns warnings for the caller to print. fsOps lets tests make the swap fail; it is not part of the public signature.
+export async function assembleSite({ projectDir, config, viewerDir = packagedViewerDir, runtimeDir = packagedRuntimeDir, includeApp = true, buildStdio, fsOps = {} }) {
+  const ops = { rename: fs.rename, rm: fs.rm, ...fsOps };
   const historyDir = path.resolve(projectDir, config.history);
   const sourceDir = path.resolve(projectDir, config.source);
   const outDir = path.resolve(projectDir, config.out);
+  const warnings = [];
 
   const manifest = await verifyHistory(historyDir);
   if (!manifest?.versions.length) throw new Error('Save a first version with: afterimage save "Name"');
@@ -42,22 +80,40 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
   } catch {
     throw new Error('The viewer is not built. Run "npm run build:viewer" first.');
   }
-  checkOut(outDir, [path.resolve(projectDir), historyDir, ...(includeApp ? [sourceDir] : [])]);
+  checkOut({ outDir, projectDir: path.resolve(projectDir), historyDir, sourceDir, includeApp });
+  const existing = await fs.lstat(outDir).catch(() => null);
+  if (existing && !existing.isDirectory()) throw new Error(`"out" (${outDir}) exists and is not a folder. Remove it or point "out" at another path.`);
+  await removeStale(outDir);
 
   let app;
   if (includeApp) {
     if (config.build) await runBuild(config.build, projectDir, { stdio: buildStdio, closing: 'Nothing was built.' });
+    const excluded = projectExcludes(config);
+    await checkCollision(sourceDir, excluded);
     // Same selection as a save, so the live root matches what a save captures.
-    app = await readSnapshot(sourceDir, { exclude: projectExcludes(config) });
+    app = await readSnapshot(sourceDir, { exclude: excluded });
     // Case-insensitive: on Windows and macOS Afterimage/ is the same folder.
-    if ([...app.keys()].some(name => name.split('/')[0].toLowerCase() === servedFolder)) {
-      throw new Error(`The app already has an ${servedFolder}/ folder, and Afterimage serves the history there. Rename it or add it to exclude.`);
-    }
+    if ([...app.keys()].some(name => name.split('/')[0].toLowerCase() === servedFolder)) throw collision();
   }
 
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const staging = path.join(path.dirname(outDir), `${path.basename(outDir)}.tmp-${randomUUID().slice(0, 8)}`);
   const previous = `${staging}.old`;
+  // A locked file (a static server, an indexer) often clears on its own, so try once more before giving up.
+  const rename = async (from, to) => {
+    try {
+      await ops.rename(from, to);
+    } catch (error) {
+      if (!lockedCodes.has(error.code)) throw error;
+      await wait(250);
+      try {
+        await ops.rename(from, to);
+      } catch (again) {
+        if (!lockedCodes.has(again.code)) throw again;
+        throw new Error(`Could not replace ${config.out}: a file in it is in use. Close anything serving it (like afterimage dev or a static server) and run build again. The previous site is unchanged.`, { cause: again });
+      }
+    }
+  };
   try {
     const served = path.join(staging, servedFolder);
     await fs.mkdir(served, { recursive: true });
@@ -80,23 +136,31 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     }
 
     // Windows cannot rename over an existing folder, so the old site steps aside first and comes back if the swap fails.
-    let movedAside = false;
+    if (existing) await rename(outDir, previous);
     try {
-      await fs.rename(outDir, previous);
-      movedAside = true;
+      await rename(staging, outDir);
     } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-    try {
-      await fs.rename(staging, outDir);
-    } catch (error) {
-      if (movedAside) await fs.rename(previous, outDir);
+      if (existing) {
+        try {
+          await ops.rename(previous, outDir);
+        } catch {
+          // Keep the original error as the story; only add where the old site is.
+          throw new Error(`${error.message} The previous site could not be put back; it was left at ${previous}.`, { cause: error });
+        }
+      }
       throw error;
     }
-    await fs.rm(previous, keep);
+    // The new site is already live, so failing to clear the old one is a warning, not a failed build.
+    if (existing) {
+      try {
+        await ops.rm(previous, keep);
+      } catch (error) {
+        warnings.push(`Built, but could not remove the previous site at ${previous}: ${error.message}. It is safe to delete; the next build tries again.`);
+      }
+    }
   } catch (error) {
-    await fs.rm(staging, keep);
+    await fs.rm(staging, keep).catch(() => {});
     throw error;
   }
-  return { outDir, versions: manifest.versions.length };
+  return { outDir, versions: manifest.versions.length, warnings };
 }
