@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { validateManifest } from '../engine/manifest.js';
+import { injectFrameScript } from '../runtime/map.js';
 
 const publicExtensions = new Set(['.html', '.css', '.js', '.mjs', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf', '.mp4', '.webm', '.mp3', '.wav', '.ogg', '.wasm', '.txt', '.webmanifest', '.xml', '.pdf']);
 // Source maps are build output nobody browses in a saved version, so they are left out instead of failing the save.
@@ -48,6 +49,16 @@ export async function readSnapshot(directory, { exclude = [], strict = false } =
 export function fingerprint(files) {
   const entries = [...files].map(([name, bytes]) => [name, createHash('sha256').update(bytes).digest('hex')]);
   return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
+
+// Every saved page loads the frame runtime first, so a built app finds its files and its routes inside the viewer
+// (src/runtime/sw.js says how). latin1 turns each byte into one character and back, so only the inserted tag
+// changes. A UTF-16 page would be corrupted by single-byte text, so it is saved as it is.
+function withFrameScript(files, id) {
+  const isUtf16 = bytes => (bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff);
+  return new Map([...files].map(([name, bytes]) => [name, path.extname(name).toLowerCase() === '.html' && !isUtf16(bytes)
+    ? Buffer.from(injectFrameScript(bytes.toString('latin1'), id), 'latin1')
+    : bytes]));
 }
 
 const manifestPath = historyDir => path.join(historyDir, 'versions.json');
@@ -108,11 +119,17 @@ export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { nam
     await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
     const manifest = (await verifyHistory(historyDir)) ?? { schemaVersion: 1, versions: [] };
     const latest = manifest.versions[0];
-    const files = await readSnapshot(sourceDir, { exclude });
-    const sha256 = fingerprint(files);
-    if (latest && sha256 === latest.sha256) return { version: latest, unchanged: true };
+    const source = await readSnapshot(sourceDir, { exclude });
+    const sourceSha = fingerprint(source);
+    // The latest version's bytes carry its own id in the tag, so the same build is compared as it would have been
+    // saved then. A version saved without the runtime (Northwind) matches the source as it is.
+    if (latest && (fingerprint(withFrameScript(source, latest.id)) === latest.sha256 || sourceSha === latest.sha256)) {
+      return { version: latest, unchanged: true };
+    }
     const number = latest ? Number(latest.id.slice(1)) + 1 : 1;
     if (!Number.isSafeInteger(number)) throw new Error('Version number exceeds the supported range.');
+    const files = withFrameScript(source, `v${number}`);
+    const sha256 = fingerprint(files);
     const version = {
       id: `v${number}`, name: name.trim(), label: `Version ${number}`,
       file: `versions/v${number}/index.html`, notes: notes.map(note => note.trim()),
@@ -125,7 +142,7 @@ export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { nam
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, bytes, { flag: 'wx' });
     }
-    if (fingerprint(await readSnapshot(sourceDir, { exclude })) !== sha256) {
+    if (fingerprint(await readSnapshot(sourceDir, { exclude })) !== sourceSha) {
       throw new Error('The prototype changed during the save. Run the command again after editing stops.');
     }
     manifest.versions.unshift(version);

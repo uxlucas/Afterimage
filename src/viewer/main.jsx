@@ -40,6 +40,21 @@ async function loadManifest() {
   return validateManifest(await response.json());
 }
 
+// Saved built apps ask for root paths like /assets/x.js; the frame runtime's worker (sw.js, next to this page)
+// answers them from each version's own folder. Frames are created only once it is active, so a frame's first
+// requests already go through it. Where service workers are unavailable (an insecure origin, a host that won't
+// serve sw.js) the viewer renders anyway.
+async function startRuntime() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    // A module worker, so it can import map.js; updateViaCache 'none' so a new build's map.js is never stale.
+    await navigator.serviceWorker.register('sw.js', { scope: './', type: 'module', updateViaCache: 'none' });
+    await navigator.serviceWorker.ready;
+  } catch (error) {
+    console.warn('The frame runtime did not start, so built apps may render without their files.', error);
+  }
+}
+
 // In dev, Vite can evaluate this entry more than once on a page (after an edit it re-runs the entry, and the
 // page can then import both the plain and the timestamped URL). Keep one root per page so there is only ever
 // one app. The build evaluates the entry once, so this branch is dropped there.
@@ -51,8 +66,8 @@ if (import.meta.hot) {
 } else {
   root = createRoot(container);
 }
-loadManifest().then(
-  manifest => root.render(<StrictMode><RootBoundary><App versions={manifest.versions} /></RootBoundary></StrictMode>),
+Promise.all([loadManifest(), startRuntime()]).then(
+  ([manifest]) => root.render(<StrictMode><RootBoundary><App versions={manifest.versions} /></RootBoundary></StrictMode>),
   error => {
     console.error('Could not load version history.', error);
     root.render(<StrictMode><LoadError /></StrictMode>);

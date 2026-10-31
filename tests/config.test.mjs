@@ -61,10 +61,10 @@ test('a config with a wrongly typed field is rejected by name', async t => {
 test('project excludes cover the project-level names, the configured folders and config.exclude, once each', () => {
   const base = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: ['cache', 'node_modules'], type: 'plain' };
   assert.deepEqual(projectExcludes(base), [
-    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', '.afterimage/site', 'cache'
+    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml', '.afterimage/site', 'cache'
   ]);
   assert.deepEqual(projectExcludes({ ...base, history: 'versions-here/', out: './site-out' }), [
-    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'versions-here', 'site-out', 'cache'
+    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml', 'versions-here', 'site-out', 'cache'
   ]);
 });
 

@@ -46,6 +46,20 @@ test('showsVersion survives an anchor link, and is false for a cross-origin or u
   assert.equal(showsVersion(sameOrigin('http://localhost/versions/v2/index.html'), null, page), false);
 });
 
+test('showsVersion trusts the frame runtime\'s mark over the URL it rewrote', () => {
+  const version = { id: 'v2', file: 'versions/v2/index.html' };
+  const page = 'http://localhost/afterimage/index.html?version=v2';
+  const marked = (href, id) => {
+    const frame = sameOrigin(href);
+    frame.contentWindow.__afterimageVersion = id;
+    return frame;
+  };
+  assert.equal(showsVersion(marked('http://localhost/about', 'v2'), version, page), true);
+  assert.equal(showsVersion(marked('http://localhost/afterimage/versions/v2/index.html', 'v1'), version, page), false);
+  // The live app at the root has no mark, and is not the version.
+  assert.equal(showsVersion(sameOrigin('http://localhost/'), version, page), false);
+});
+
 // ---- the URL writer (C1) ----
 
 function fakeClock() {

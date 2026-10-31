@@ -30,11 +30,14 @@ export function sameDocument(a, b) {
   return left !== null && left === withoutHash(b);
 }
 
-// True when `frame` has finished loading `version`'s own page, give or take a hash.
+// True when `frame` has finished loading `version`'s own page, give or take a hash. A version saved with the frame
+// runtime names itself, since its URL is rewritten to the app's own paths (any page or route of the version counts).
+// Versions saved before the runtime (Northwind) are told apart by URL.
 export function showsVersion(frame, version, baseHref = globalThis.location?.href) {
   if (!version) return false;
   const win = frameWindow(frame);
   if (!win || win.document.readyState !== 'complete') return false;
+  if (win.__afterimageVersion !== undefined) return win.__afterimageVersion === version.id;
   try {
     return sameDocument(win.location.href, new URL(version.file, baseHref).href);
   } catch {

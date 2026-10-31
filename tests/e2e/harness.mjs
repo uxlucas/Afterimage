@@ -8,10 +8,16 @@
 //   - in the panel, the button "N changes from vA to vB" (aria-expanded), which opens the list named "Changes"
 //   - the list's role=listitem rows, each holding one change, and the data-kind on its button (added, changed, removed)
 //   - the iframe[data-role="target"] that holds the shown version
+//   - window.__afterimageVersion in that frame, which the frame runtime sets for versions saved with it (their URL
+//     is rewritten to the app's own paths, so the URL alone no longer says which version a frame holds)
 //
 // expectChange is text the newest version adds or changes; it must appear in an Added or Changed row of the list.
 // A Removed row does not count: text that left the page is not what the newest version shows.
-// A version's frame passes when its body has visible text (trimmed innerText) and at least one element.
+// A version's frame passes when its body has visible text (trimmed innerText) and at least one element, and every
+// same-origin request it makes stays inside /afterimage/ or is answered by the worker. Anything else reached the live
+// app at the root, which can look right while showing the wrong version.
+// follow ({ link, shows }) clicks the link named `link` inside the newest version's frame and waits for `shows`:
+// the frame must still hold the same version afterwards.
 // If the viewer renames those labels, this is the one file to update.
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
@@ -45,7 +51,7 @@ async function serve(root) {
 }
 
 // Runs the example's own afterimage:build script, so the check covers what a user would run.
-function build(exampleDir) {
+function npmBuild(exampleDir) {
   // shell: true so that npm (npm.cmd on Windows) resolves.
   const result = spawnSync('npm run afterimage:build', { cwd: exampleDir, shell: true, encoding: 'utf8' });
   if (result.status !== 0) {
@@ -57,8 +63,13 @@ function build(exampleDir) {
 function watchRequests(page, origin) {
   let failures = [];
   const ours = url => url.startsWith(`${origin}/`) && new URL(url).pathname !== '/favicon.ico';
+  const inFrame = request => { try { return request.frame() !== page.mainFrame(); } catch { return false; } };
   page.on('response', response => {
-    if (ours(response.url()) && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
+    if (!ours(response.url())) return;
+    if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
+    else if (inFrame(response.request()) && !new URL(response.url()).pathname.startsWith('/afterimage/') && !response.fromServiceWorker()) {
+      failures.push(`left the version (served from the live root) ${response.url()}`);
+    }
   });
   page.on('requestfailed', request => {
     if (ours(request.url())) failures.push(`${request.failure()?.errorText ?? 'failed'} ${request.url()}`);
@@ -75,28 +86,36 @@ function watchRequests(page, origin) {
 
 // Waits until the target frame shows `version`'s page, then reads its document. Reading it at all proves the frame
 // is same-origin with the viewer, which the review and the highlights depend on.
-async function readFrame(page, version) {
+// With shows (after a click inside the frame) it waits for that text instead, whatever the frame holds, so the caller
+// can say which version it found.
+async function readFrame(page, version, shows = '') {
   const frame = page.locator('iframe[data-role="target"]');
   await frame.waitFor({ state: 'attached', timeout: loadTimeout });
-  await page.waitForFunction(({ file }) => {
+  await page.waitForFunction(({ id, file, shows }) => {
     const element = document.querySelector('iframe[data-role="target"]');
     try {
       const doc = element?.contentDocument;
-      return Boolean(doc && doc.readyState === 'complete' && doc.body && new URL(element.contentWindow.location.href).pathname.endsWith(`/${file}`));
+      const win = element.contentWindow;
+      if (!doc || doc.readyState !== 'complete' || !doc.body) return false;
+      if (shows) return doc.body.innerText.includes(shows);
+      // Same rule as the viewer's showsVersion: the runtime's mark when there is one, the URL otherwise.
+      return win.__afterimageVersion !== undefined ? win.__afterimageVersion === id : new URL(win.location.href).pathname.endsWith(`/${file}`);
     } catch {
       return false;
     }
-  }, { file: version.file }, { timeout: loadTimeout });
+  }, { id: version.id, file: version.file, shows }, { timeout: loadTimeout });
   return page.evaluate(() => {
-    const doc = document.querySelector('iframe[data-role="target"]').contentDocument;
+    const element = document.querySelector('iframe[data-role="target"]');
+    const doc = element.contentDocument;
     const visibleText = doc.body.innerText.trim();
-    return { text: visibleText, hasContent: visibleText.length > 0 && doc.body.children.length > 0, href: doc.location.href };
+    return { text: visibleText, hasContent: visibleText.length > 0 && doc.body.children.length > 0, href: doc.location.href, path: doc.location.pathname, version: element.contentWindow.__afterimageVersion ?? null };
   });
 }
 
-// checkExample(exampleDir, { expectChange }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, follow, build }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
-export async function checkExample(exampleDir, { expectChange }) {
+// build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
+export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild }) {
   assert.ok(expectChange, 'checkExample needs expectChange: text the newest version adds.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
@@ -111,7 +130,7 @@ export async function checkExample(exampleDir, { expectChange }) {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
     const requests = watchRequests(page, server.origin);
     const noFailures = step => assert.deepEqual(requests.take(), [], `${step}: these requests failed`);
-    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], changes: null };
+    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], followed: null, changes: null };
 
     // The app at the root loads as its own build does.
     const response = await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });
@@ -130,6 +149,23 @@ export async function checkExample(exampleDir, { expectChange }) {
       noFailures(`Version ${version.id}`);
       report.versions.push({ id: version.id, name: version.name, textLength: frame.text.length });
     }
+
+    // A link inside the frame keeps the frame in the version it started in.
+    if (follow) {
+      const [newest] = versions;
+      await page.goto(`${server.origin}/afterimage/?version=${newest.id}`, { waitUntil: 'load', timeout: loadTimeout });
+      await readFrame(page, newest);
+      await page.frameLocator('iframe[data-role="target"]').getByRole('link', { name: follow.link }).click();
+      const frame = await readFrame(page, newest, follow.shows);
+      assert.equal(frame.version, newest.id, `After clicking "${follow.link}" the frame holds ${frame.href}, not ${newest.id}`);
+      noFailures(`Following "${follow.link}" in ${newest.id}`);
+      report.followed = { link: follow.link, path: frame.path };
+    }
+
+    // The worker the viewer registered never takes over the app at the root.
+    await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });
+    assert.equal(await page.evaluate(() => Boolean(navigator.serviceWorker?.controller)), false, 'The app at / is controlled by a service worker after the viewer ran');
+    noFailures('App at / after the viewer');
 
     // The two newest versions compared: highlights on, the change list names the change.
     const [newest, previous] = versions;

@@ -1,0 +1,8 @@
+{
+  "source": "dist",
+  "build": "npm run build",
+  "history": "afterimage",
+  "out": ".afterimage/site",
+  "exclude": [],
+  "type": "vite"
+}

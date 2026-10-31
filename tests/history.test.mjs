@@ -104,7 +104,6 @@ test('a save keeps all assets and history, and the result survives another save 
   const { root, historyDir, sourceDir, options } = await fixture(t);
   const initial = await verifyHistory(historyDir);
   await write(sourceDir, { 'assets/sample.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' });
-  const sourceHash = fingerprint(await readSnapshot(sourceDir));
   const title = 'Checkout "revision" <3';
   const { version, unchanged } = await saveVersion(options, { name: title, notes: ['First note', 'Second note'] });
   assert.equal(unchanged, false);
@@ -112,7 +111,8 @@ test('a save keeps all assets and history, and the result survives another save 
   const saved = (await verifyHistory(historyDir)).versions[0];
   assert.equal(saved.name, title);
   assert.deepEqual(saved.notes, ['First note', 'Second note']);
-  assert.equal(saved.sha256, sourceHash);
+  // The fingerprint covers the files as saved, frame script included.
+  assert.equal(saved.sha256, fingerprint(await readSnapshot(path.join(historyDir, 'versions', saved.id))));
   assert.ok(Number.isFinite(Date.parse(saved.savedAt)));
   assert.equal(await fs.readFile(path.join(historyDir, 'versions', saved.id, 'assets', 'sample.svg'), 'utf8'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
 
@@ -121,7 +121,7 @@ test('a save keeps all assets and history, and the result survives another save 
   assert.equal(next.version.id, 'v5');
   const final = await verifyHistory(historyDir);
   assert.deepEqual(final.versions.slice(2), initial.versions);
-  assert.equal(final.versions[1].sha256, sourceHash);
+  assert.equal(final.versions[1].sha256, saved.sha256);
 
   const deployed = path.join(root, 'deployment', 'afterimage');
   await fs.cp(historyDir, deployed, { recursive: true });

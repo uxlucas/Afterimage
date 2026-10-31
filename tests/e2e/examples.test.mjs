@@ -1,11 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkExample } from './harness.mjs';
 
 const example = name => fileURLToPath(new URL(`../../examples/${name}/`, import.meta.url));
+const fixture = name => fileURLToPath(new URL(`./fixtures/${name}/`, import.meta.url));
+const bin = fileURLToPath(new URL('../../bin/afterimage.mjs', import.meta.url));
+
+// The real command, as a user would run it in that folder. stdin is closed, so init never waits on a question.
+function afterimage(cwd, ...args) {
+  const result = spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.equal(result.status, 0, `afterimage ${args.join(' ')} failed in ${cwd}:\n${result.stdout}${result.stderr}`);
+  return result.stdout;
+}
 
 test('northwind: every version renders and v3 shows its changes', async () => {
   const report = await checkExample(example('northwind'), { expectChange: 'Sign in with passkey' });
   assert.deepEqual(report.versions.map(version => version.id), ['v3', 'v2', 'v1']);
+});
+
+test('vite-react: home and /about render inside the viewer, the live app at / is untouched', async () => {
+  const dir = example('vite-react');
+  const report = await checkExample(dir, { expectChange: 'Ship the prototype', follow: { link: 'About this app', shows: 'A second route' } });
+  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+  // The router sees its own path, and the click stayed in the version it started in.
+  assert.equal(report.followed.path, '/about');
+  // The root is the app's own build, byte for byte: nothing Afterimage adds reaches it.
+  const site = path.join(dir, '.afterimage/site');
+  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'dist/index.html')));
+});
+
+test('a multi-page plain site keeps hard links inside the version', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.cp(fixture('multipage'), dir, { recursive: true });
+  afterimage(dir, 'init');
+  afterimage(dir, 'save', 'One');
+  const page = path.join(dir, 'index.html');
+  await fs.writeFile(page, (await fs.readFile(page, 'utf8')).replace('<h1>Page one</h1>', '<h1>Page one, revised</h1>'));
+  afterimage(dir, 'save', 'Two');
+
+  const report = await checkExample(dir, {
+    expectChange: 'Page one, revised',
+    build: () => afterimage(dir, 'build'),
+    follow: { link: 'Go to page two', shows: 'Reached by a hard link' },
+  });
+  assert.equal(report.followed.path, '/two.html');
 });

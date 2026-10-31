@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "versions": [
+    {
+      "id": "v2",
+      "name": "New heading",
+      "label": "Version 2",
+      "file": "versions/v2/index.html",
+      "notes": [
+        "The home heading now reads Ship the prototype"
+      ],
+      "savedAt": "2026-10-31T21:29:34.743Z",
+      "sha256": "0b4c5f4d8a860ffe9f4b68365069028dbca6e58cbca71f60fbafa1f48791b905"
+    },
+    {
+      "id": "v1",
+      "name": "First version",
+      "label": "Version 1",
+      "file": "versions/v1/index.html",
+      "notes": [
+        "The Vite + React starter with a second route at /about"
+      ],
+      "savedAt": "2026-10-31T21:29:28.751Z",
+      "sha256": "e0fe746fb875e852cbb9e58ee7cd5d54a486eb06ebe6ae44c350c07f5c76574c"
+    }
+  ]
+}

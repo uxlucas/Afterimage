@@ -6,7 +6,8 @@ export const configName = 'afterimage.config.json';
 const defaults = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'unknown' };
 
 // Names that are the project's own files, not the prototype. They only matter when the prototype is the project root.
-const projectNames = ['node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName];
+// The host configs are the ones init writes; a plain folder set up by init must still save.
+const projectNames = ['node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName, 'vercel.json', 'netlify.toml'];
 
 // Same shape readSnapshot expects: forward slashes, no leading ./, no trailing slash. "x/../site" is "site" and "src/.." is ".".
 const cleanPath = value => {

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { main } from '../src/cli/main.js';
 import { writeConfig } from '../src/cli/config.js';
+import { frameTag } from '../src/runtime/map.js';
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -49,8 +50,8 @@ test('save builds, then saves the build output as the next version', async t => 
   assert.equal(second.code, 0);
   assert.equal(second.stdout, 'Saved v2 "Second draft".\n');
   const history = path.join(root, 'afterimage');
-  assert.equal(await fs.readFile(path.join(history, 'versions/v1/index.html'), 'utf8'), '<h1>One</h1>');
-  assert.equal(await fs.readFile(path.join(history, 'versions/v2/index.html'), 'utf8'), '<h1>Two</h1>');
+  assert.equal(await fs.readFile(path.join(history, 'versions/v1/index.html'), 'utf8'), `${frameTag('v1')}<h1>One</h1>`);
+  assert.equal(await fs.readFile(path.join(history, 'versions/v2/index.html'), 'utf8'), `${frameTag('v2')}<h1>Two</h1>`);
   const manifest = JSON.parse(await fs.readFile(path.join(history, 'versions.json'), 'utf8'));
   assert.deepEqual(manifest.versions.map(version => version.id), ['v2', 'v1']);
   assert.deepEqual(manifest.versions[1].notes, ['Rough layout', 'No copy yet']);
@@ -89,6 +90,15 @@ test('a failing build saves nothing and leaves no lock or stage folder', async t
   assert.doesNotMatch(result.stderr, /\n\s+at /);
   assert.deepEqual(await listing(history), before);
   assert.deepEqual((await fs.readdir(history)).filter(name => name.startsWith('.afterimage-')), []);
+});
+
+test('a plain folder set up by init saves, without the project files init wrote next to it', async t => {
+  const root = await temp(t);
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Plain</h1>');
+  assert.equal((await run(root, ['init'])).code, 0);
+  const result = await run(root, ['save', 'First draft']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(await fs.readdir(path.join(root, 'afterimage/versions/v1')), ['index.html']);
 });
 
 test('save outside a project points to init', async t => {
