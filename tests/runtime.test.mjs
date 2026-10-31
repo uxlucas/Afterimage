@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { frameTag, injectFrameScript, mapRequest, versionInPath } from '../src/runtime/map.js';
+import * as map from '../src/runtime/map.js';
 import { fingerprint, readSnapshot, saveVersion, verifyHistory } from '../src/cli/history.js';
 
+const { frameTag, injectFrameScript } = map;
 const northwind = fileURLToPath(new URL('../examples/northwind/afterimage/', import.meta.url));
 const tag = id => `<script src="/afterimage/frame.js" data-afterimage-version="${id}"></script>`;
+const workerSource = await fs.readFile(new URL('../src/runtime/sw.js', import.meta.url), 'utf8');
+const frameSource = await fs.readFile(new URL('../src/runtime/frame.js', import.meta.url), 'utf8');
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -20,36 +24,101 @@ async function temp(t) {
   return root;
 }
 
-// ---- mapRequest ----
+// ---- the stand-ins for a browser ----
 
-test('a root path from a version maps into that version folder', () => {
-  assert.equal(mapRequest({ clientVersion: 'v3', url: '/assets/a.js' }), '/afterimage/versions/v3/assets/a.js');
-  assert.equal(mapRequest({ clientVersion: 'v3', url: '/' }), '/afterimage/versions/v3/');
-  assert.equal(mapRequest({ clientVersion: 'v3', url: '/two.html?tab=2#faq' }), '/afterimage/versions/v3/two.html?tab=2#faq');
-  assert.equal(mapRequest({ clientVersion: 'v12', url: 'http://localhost:4321/_next/static/x.css' }), 'http://localhost:4321/afterimage/versions/v12/_next/static/x.css');
-});
+// A stand-in for the worker's global scope: listeners, clients, caches and the network, all in memory.
+// brokenCaches makes every Cache API call fail, as it does with storage blocked or full.
+function workerScope({ alive = [], brokenCaches = false } = {}) {
+  const caches = new Map();
+  const listeners = {};
+  const cacheStorage = {
+    async open(name) {
+      if (brokenCaches) throw new Error('QuotaExceededError');
+      if (!caches.has(name)) caches.set(name, new Map());
+      const store = caches.get(name);
+      const key = request => String(request.url ?? request);
+      return {
+        async put(request, response) {
+          const body = await response.text();
+          store.delete(key(request)); // like the Cache API, a put moves the entry to the end
+          store.set(key(request), body);
+        },
+        async match(request) { const body = store.get(key(request)); return body === undefined ? undefined : new Response(body); },
+        async keys() { return [...store.keys()].map(url => new Request(url)); },
+        async delete(request) { return store.delete(key(request)); },
+      };
+    },
+  };
+  const scope = {
+    location: new URL('http://localhost:4321/afterimage/sw.js'),
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    skipWaiting: async () => {},
+    clients: { claim: async () => {}, matchAll: async () => alive.map(id => ({ id })) },
+  };
+  const network = async request => new Response(`body of ${new URL(request.url).pathname}`, { status: 200, headers: { 'Content-Type': 'text/javascript' } });
+  return { scope, cacheStorage, network, listeners, caches, alive };
+}
 
-test('a request already under /afterimage/ passes through', () => {
-  for (const url of ['/afterimage/versions/v3/assets/a.js', '/afterimage/frame.js', '/afterimage', 'http://localhost/afterimage/versions/v1/']) {
-    assert.equal(mapRequest({ clientVersion: 'v3', url }), url);
-  }
-  // Only the folder itself, not a name that starts the same way.
-  assert.equal(mapRequest({ clientVersion: 'v3', url: '/afterimages.css' }), '/afterimage/versions/v3/afterimages.css');
-});
+// Runs sw.js as the classic script it is, in a fresh context: the same as the browser starting the worker (again).
+// Returns its listeners, and the context, which holds its top-level functions (the inline copy of map.js).
+function startWorker(world) {
+  const context = vm.createContext({ self: world.scope, caches: world.cacheStorage, fetch: world.network, Request, Response, URL });
+  vm.runInContext(workerSource, context, { filename: 'sw.js' });
+  return { listeners: world.listeners, context };
+}
 
-test('an unknown client passes through', () => {
-  assert.equal(mapRequest({ clientVersion: undefined, url: '/assets/a.js' }), '/assets/a.js');
-  assert.equal(mapRequest({ clientVersion: null, url: '/assets/a.js' }), '/assets/a.js');
-  assert.equal(mapRequest({ clientVersion: '../v1', url: '/assets/a.js' }), '/assets/a.js');
-});
+// Dispatches a fetch event the way the browser would and returns what the page gets, or null when the worker
+// left the request to the network.
+async function dispatch(listeners, { url, mode = 'no-cors', method = 'GET', clientId = '', resultingClientId = '' }) {
+  let answer = null;
+  const pending = [];
+  listeners.fetch({
+    // Request refuses mode navigate outside a browser, so a navigation is a plain object with the fields the worker reads.
+    request: mode === 'navigate' ? { url, mode, method } : new Request(url, { mode: method === 'GET' ? mode : 'same-origin', method }),
+    clientId, resultingClientId,
+    respondWith: value => { answer = Promise.resolve(value); },
+    waitUntil: promise => pending.push(promise),
+  });
+  await Promise.all(pending);
+  return answer && await answer;
+}
 
-test('versionInPath reads the version a document lives in', () => {
-  assert.equal(versionInPath('/afterimage/versions/v3/index.html'), 'v3');
-  assert.equal(versionInPath('/afterimage/versions/v10/about/'), 'v10');
-  assert.equal(versionInPath('/afterimage/versions/v3'), null);
-  assert.equal(versionInPath('/afterimage/'), null);
-  assert.equal(versionInPath('/versions/v3/index.html'), null);
-});
+const bodyOf = async response => response && await response.text();
+
+// ---- one mapping table, for map.js and for the copy inside sw.js ----
+
+const copies = { 'map.js': map, 'the copy in sw.js': startWorker(workerScope()).context };
+
+for (const [name, copy] of Object.entries(copies)) {
+  test(`${name}: a root path from a version maps into that version folder`, () => {
+    assert.equal(copy.mapRequest({ clientVersion: 'v3', url: '/assets/a.js' }), '/afterimage/versions/v3/assets/a.js');
+    assert.equal(copy.mapRequest({ clientVersion: 'v3', url: '/' }), '/afterimage/versions/v3/');
+    assert.equal(copy.mapRequest({ clientVersion: 'v3', url: '/two.html?tab=2#faq' }), '/afterimage/versions/v3/two.html?tab=2#faq');
+    assert.equal(copy.mapRequest({ clientVersion: 'v12', url: 'http://localhost:4321/_next/static/x.css' }), 'http://localhost:4321/afterimage/versions/v12/_next/static/x.css');
+    // Only the folder itself is served, not a name that starts the same way.
+    assert.equal(copy.mapRequest({ clientVersion: 'v3', url: '/afterimages.css' }), '/afterimage/versions/v3/afterimages.css');
+  });
+
+  test(`${name}: a request already under /afterimage/, or from an unknown client, passes through`, () => {
+    for (const url of ['/afterimage/versions/v3/assets/a.js', '/afterimage/frame.js', '/afterimage', 'http://localhost/afterimage/versions/v1/']) {
+      assert.equal(copy.mapRequest({ clientVersion: 'v3', url }), url);
+    }
+    for (const clientVersion of [undefined, null, '', '../v1', 'v0', 'V3']) {
+      assert.equal(copy.mapRequest({ clientVersion, url: '/assets/a.js' }), '/assets/a.js');
+    }
+    assert.equal(copy.isServedPath('/afterimage'), true);
+    assert.equal(copy.isServedPath('/afterimage/x'), true);
+    assert.equal(copy.isServedPath('/afterimages'), false);
+  });
+
+  test(`${name}: versionInPath reads the version a document lives in`, () => {
+    assert.equal(copy.versionInPath('/afterimage/versions/v3/index.html'), 'v3');
+    assert.equal(copy.versionInPath('/afterimage/versions/v10/about/'), 'v10');
+    assert.equal(copy.versionInPath('/afterimage/versions/v3'), null);
+    assert.equal(copy.versionInPath('/afterimage/'), null);
+    assert.equal(copy.versionInPath('/versions/v3/index.html'), null);
+  });
+}
 
 // ---- injectFrameScript ----
 
@@ -62,8 +131,8 @@ test('the tag is the first child of <head>, whatever its case or attributes', ()
 });
 
 test('a byte order mark, a doctype and comments before <head> are stepped over', () => {
-  const page = '\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>\n';
-  assert.equal(injectFrameScript(page, 'v1'), `\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>${tag('v1')}\n`);
+  const page = '﻿<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>\n';
+  assert.equal(injectFrameScript(page, 'v1'), `﻿<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>${tag('v1')}\n`);
   // The same bytes read as latin1, which is how a save reads them.
   assert.equal(injectFrameScript('\xEF\xBB\xBF<p>hi</p>', 'v1'), `\xEF\xBB\xBF${tag('v1')}<p>hi</p>`);
 });
@@ -76,12 +145,23 @@ test('a document with no <head> gets the tag after <html>, after the doctype, or
 });
 
 test('injecting never touches another byte, and is never doubled', () => {
-  const page = '<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset="utf-8">\r\n</head><body>\u00e9</body></html>';
+  const page = '<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset="utf-8">\r\n</head><body>é</body></html>';
   const once = injectFrameScript(page, 'v4');
   assert.equal(once.replace(tag('v4'), ''), page);
   assert.equal(injectFrameScript(once, 'v4'), once);
-  // A page that came from another saved version is re-labelled, not given a second tag.
+  // A page that came from another saved version is re-labelled, not given a second tag. Same without a <head>.
   assert.equal(injectFrameScript(injectFrameScript(page, 'v1'), 'v4'), once);
+  for (const bare of ['<h1>One</h1>', '<!doctype html>\n<p>x', '<html><body>x</body></html>']) {
+    assert.equal(injectFrameScript(injectFrameScript(bare, 'v1'), 'v4'), injectFrameScript(bare, 'v4'));
+  }
+});
+
+test('the tag\'s text elsewhere in a page is content: it is left alone and the tag still goes in <head>', () => {
+  const quoted = `<script>const s = '${tag('v1')}';</script>`;
+  const page = `<!doctype html><html><head><title>x</title></head><body>${quoted}</body></html>`;
+  const injected = injectFrameScript(page, 'v3');
+  assert.equal(injected, `<!doctype html><html><head>${tag('v3')}<title>x</title></head><body>${quoted}</body></html>`);
+  assert.equal(injected.replace(tag('v3'), ''), page);
 });
 
 // ---- saving ----
@@ -138,115 +218,169 @@ test('Northwind still verifies, and checking it never adds the frame script', as
 
 // ---- the service worker ----
 
-// A stand-in for the worker's global scope: listeners, clients, caches and the network, all in memory.
-function workerScope({ caches = new Map(), alive = [] } = {}) {
-  const listeners = {};
-  const fetched = [];
-  const cacheStorage = {
-    async open(name) {
-      if (!caches.has(name)) caches.set(name, new Map());
-      const store = caches.get(name);
-      return {
-        async put(key, response) { store.set(String(key.url ?? key), await response.text()); },
-        async match(key) { const body = store.get(String(key.url ?? key)); return body === undefined ? undefined : new Response(body); },
-        async keys() { return [...store.keys()].map(url => new Request(url)); },
-        async delete(key) { return store.delete(String(key.url ?? key)); },
-      };
-    },
-  };
-  const scope = {
-    location: new URL('http://localhost:4321/afterimage/sw.js'),
-    addEventListener: (type, fn) => { listeners[type] = fn; },
-    skipWaiting: async () => {},
-    clients: { claim: async () => {}, matchAll: async () => alive.map(id => ({ id })) },
-  };
-  const network = async request => {
-    fetched.push(request.url);
-    return new Response(`body of ${new URL(request.url).pathname}`, { status: 200, headers: { 'Content-Type': 'text/javascript' } });
-  };
-  return { scope, cacheStorage, network, listeners, fetched, caches };
-}
+const origin = 'http://localhost:4321';
+const navigateTo = (listeners, version, clientId) => dispatch(listeners, { url: `${origin}/afterimage/versions/${version}/index.html`, mode: 'navigate', resultingClientId: clientId });
+const asset = (listeners, clientId) => dispatch(listeners, { url: `${origin}/assets/a.js`, clientId });
+const storedVersions = world => [...[...world.caches.values()][0].values()].map(body => JSON.parse(body).id);
 
-let loads = 0;
-async function startWorker(world) {
-  globalThis.self = world.scope;
-  globalThis.caches = world.cacheStorage;
-  globalThis.fetch = world.network;
-  // A fresh module instance each time: the same as the browser starting the worker again.
-  await import(`../src/runtime/sw.js?start=${++loads}`);
-  return world.listeners;
-}
-
-// Dispatches a fetch event the way the browser would and returns what the page gets, or null when the worker
-// left the request to the network.
-async function dispatch(listeners, { url, mode = 'no-cors', clientId = '', resultingClientId = '' }) {
-  let answer = null;
-  const pending = [];
-  listeners.fetch({
-    // Request refuses mode navigate outside a browser, so a navigation is a plain object with the fields the worker reads.
-    request: mode === 'navigate' ? { url, mode } : new Request(url, { mode }),
-    clientId, resultingClientId,
-    respondWith: value => { answer = Promise.resolve(value); },
-    waitUntil: promise => pending.push(promise),
-  });
-  await Promise.all(pending);
-  return answer && await answer;
-}
-
-test('the worker maps a version document\'s requests into its folder, and passes everything else through', async t => {
-  const saved = { self: globalThis.self, caches: globalThis.caches, fetch: globalThis.fetch };
-  t.after(() => Object.assign(globalThis, saved));
+test('the worker maps a version document\'s requests into its folder, and passes everything else through', async () => {
   const world = workerScope({ alive: ['frame-1'] });
-  const listeners = await startWorker(world);
+  const { listeners } = startWorker(world);
 
-  assert.equal(await dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v3/index.html', mode: 'navigate', resultingClientId: 'frame-1' }), null);
-  const mapped = await dispatch(listeners, { url: 'http://localhost:4321/assets/a.js', clientId: 'frame-1' });
+  assert.equal(await navigateTo(listeners, 'v3', 'frame-1'), null);
+  const mapped = await asset(listeners, 'frame-1');
   assert.equal(await mapped.text(), 'body of /afterimage/versions/v3/assets/a.js');
   assert.equal(mapped.headers.get('Content-Type'), 'text/javascript');
   // No URL of its own, so the page resolves relative imports against the path it asked for.
   assert.equal(mapped.url, '');
 
-  assert.equal(await dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v3/assets/b.js', clientId: 'frame-1' }), null);
+  assert.equal(await dispatch(listeners, { url: `${origin}/afterimage/versions/v3/assets/b.js`, clientId: 'frame-1' }), null);
   assert.equal(await dispatch(listeners, { url: 'https://fonts.example.com/a.woff2', clientId: 'frame-1' }), null);
+  // Only GET and HEAD are mapped; anything else goes to the network untouched.
+  assert.equal(await dispatch(listeners, { url: `${origin}/api/save`, method: 'POST', clientId: 'frame-1' }), null);
+  assert.equal(await bodyOf(await dispatch(listeners, { url: `${origin}/assets/a.js`, method: 'HEAD', clientId: 'frame-1' })), 'body of /afterimage/versions/v3/assets/a.js');
   // The viewer itself, and any client the worker never saw navigate.
-  assert.equal(await dispatch(listeners, { url: 'http://localhost:4321/afterimage/assets/viewer.js', clientId: 'viewer' }), null);
-  const unknown = await dispatch(listeners, { url: 'http://localhost:4321/assets/a.js', clientId: 'stranger' });
-  assert.equal(await unknown.text(), 'body of /assets/a.js');
+  assert.equal(await dispatch(listeners, { url: `${origin}/afterimage/assets/viewer.js`, clientId: 'viewer' }), null);
+  assert.equal(await bodyOf(await asset(listeners, 'stranger')), 'body of /assets/a.js');
 
   // A restarted worker has lost its memory, and still knows the frame from the cache.
-  const again = await startWorker(world);
-  const afterRestart = await dispatch(again, { url: 'http://localhost:4321/assets/a.js', clientId: 'frame-1' });
-  assert.equal(await afterRestart.text(), 'body of /afterimage/versions/v3/assets/a.js');
+  const again = startWorker(world);
+  assert.equal(await bodyOf(await asset(again.listeners, 'frame-1')), 'body of /afterimage/versions/v3/assets/a.js');
 });
 
-test('two frames created at once both keep their version, before either is listed as a client', async t => {
-  const saved = { self: globalThis.self, caches: globalThis.caches, fetch: globalThis.fetch };
-  t.after(() => Object.assign(globalThis, saved));
+test('two frames created at once both keep their version, before either is listed as a client', async () => {
   // The browser lists a client only once its document is ready, so neither frame is alive yet.
   const world = workerScope({ alive: [] });
-  const listeners = await startWorker(world);
-  await Promise.all([
-    dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v2/index.html', mode: 'navigate', resultingClientId: 'target' }),
-    dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v1/index.html', mode: 'navigate', resultingClientId: 'base' }),
-  ]);
-  assert.equal(await (await dispatch(listeners, { url: 'http://localhost:4321/assets/a.js', clientId: 'target' })).text(), 'body of /afterimage/versions/v2/assets/a.js');
-  assert.equal(await (await dispatch(listeners, { url: 'http://localhost:4321/assets/a.js', clientId: 'base' })).text(), 'body of /afterimage/versions/v1/assets/a.js');
+  const { listeners } = startWorker(world);
+  await Promise.all([navigateTo(listeners, 'v2', 'target'), navigateTo(listeners, 'v1', 'base')]);
+  assert.equal(await bodyOf(await asset(listeners, 'target')), 'body of /afterimage/versions/v2/assets/a.js');
+  assert.equal(await bodyOf(await asset(listeners, 'base')), 'body of /afterimage/versions/v1/assets/a.js');
 });
 
-test('the worker forgets clients that are gone', async t => {
-  const saved = { self: globalThis.self, caches: globalThis.caches, fetch: globalThis.fetch };
-  t.after(() => Object.assign(globalThis, saved));
-  let now = 1_000_000;
-  t.mock.method(Date, 'now', () => now);
-  const alive = ['frame-1'];
-  const world = workerScope({ alive });
-  const listeners = await startWorker(world);
-  await dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v1/', mode: 'navigate', resultingClientId: 'frame-1' });
-  now += 5 * 60_000;
-  alive.splice(0, 1, 'frame-2');
-  await dispatch(listeners, { url: 'http://localhost:4321/afterimage/versions/v2/', mode: 'navigate', resultingClientId: 'frame-2' });
-  const [store] = world.caches.values();
-  assert.deepEqual([...store.values()].map(body => JSON.parse(body).id), ['v2']);
-  const forgotten = await dispatch(listeners, { url: 'http://localhost:4321/assets/a.js', clientId: 'frame-1' });
-  assert.equal(await forgotten.text(), 'body of /assets/a.js');
+test('the worker forgets a client once it has been listed and is gone, and never one it has not seen listed', async () => {
+  const world = workerScope({ alive: [] });
+  const { listeners } = startWorker(world);
+  await navigateTo(listeners, 'v1', 'frame-1');
+  world.alive.splice(0, Infinity, 'frame-1');
+  await navigateTo(listeners, 'v2', 'frame-2');
+  // frame-1 is closed; frame-2 is listed now; frame-3 is still being created.
+  world.alive.splice(0, Infinity, 'frame-2');
+  await navigateTo(listeners, 'v3', 'frame-3');
+  assert.deepEqual(storedVersions(world).sort(), ['v2', 'v3']);
+  assert.equal(await bodyOf(await asset(listeners, 'frame-1')), 'body of /assets/a.js');
+  assert.equal(await bodyOf(await asset(listeners, 'frame-3')), 'body of /afterimage/versions/v3/assets/a.js');
+});
+
+test('clients that are never listed (abandoned navigations) are kept only up to a few, newest first', async () => {
+  const world = workerScope({ alive: [] });
+  const { listeners } = startWorker(world);
+  for (let i = 1; i <= 20; i++) await navigateTo(listeners, `v${i}`, `frame-${i}`);
+  assert.deepEqual(storedVersions(world), Array.from({ length: 16 }, (_, i) => `v${i + 5}`));
+  assert.equal(await bodyOf(await asset(listeners, 'frame-20')), 'body of /afterimage/versions/v20/assets/a.js');
+});
+
+test('when the Cache API fails, requests still go through instead of failing', async () => {
+  const world = workerScope({ alive: [], brokenCaches: true });
+  const { listeners } = startWorker(world);
+  await navigateTo(listeners, 'v2', 'frame-1');
+  // Memory still knows the frame.
+  assert.equal(await bodyOf(await asset(listeners, 'frame-1')), 'body of /afterimage/versions/v2/assets/a.js');
+  // A restarted worker cannot recall it, so it passes the request through rather than answer with an error.
+  const again = startWorker(world);
+  assert.equal(await bodyOf(await asset(again.listeners, 'frame-1')), 'body of /assets/a.js');
+});
+
+// ---- frame.js ----
+
+// Runs frame.js the way a saved page loads it, at `path` in v2, with the Navigation API or without it.
+// Returns the page's globals and what frame.js asked the browser to do.
+function loadPage(path, { withNavigation = true } = {}) {
+  let url = new URL(`${origin}${path}`);
+  const handlers = {};
+  const redirects = [];
+  const location = {
+    get href() { return url.href; }, get origin() { return url.origin; }, get pathname() { return url.pathname; },
+    get search() { return url.search; }, get hash() { return url.hash; },
+    assign: target => redirects.push([target, 'assign']),
+  };
+  const history = { state: null, replaceState: (state, title, next) => { url = new URL(next, url); } };
+  class Element {}
+  const page = {
+    document: { currentScript: { dataset: { afterimageVersion: 'v2' } } }, location, history, URL, Element,
+    addEventListener: (type, fn) => { handlers[type] = fn; },
+  };
+  if (withNavigation) {
+    page.navigation = {
+      addEventListener: (type, fn) => { handlers[type] = fn; },
+      // Both promises reject, as they do when the redirect is cut short; frame.js must not leave them unhandled.
+      navigate: (target, options) => {
+        redirects.push([target, options.history]);
+        return { committed: Promise.reject(new Error('aborted')), finished: Promise.reject(new Error('aborted')) };
+      },
+    };
+  }
+  page.window = page;
+  vm.runInContext(frameSource, vm.createContext(page), { filename: 'frame.js' });
+  return { page, location, handlers, redirects, Element };
+}
+
+const navigate = (frame, url, extra = {}) => {
+  const event = {
+    destination: { url, sameDocument: false }, cancelable: true, navigationType: 'push', downloadRequest: null, formData: null,
+    prevented: false, preventDefault() { this.prevented = true; }, ...extra,
+  };
+  frame.handlers.navigate(event);
+  return event.prevented;
+};
+
+test('frame.js marks the version and gives the app its own path', () => {
+  for (const [file, own] of [['index.html', '/'], ['about/index.html', '/about/'], ['two.html?tab=2#faq', '/two.html?tab=2#faq']]) {
+    const frame = loadPage(`/afterimage/versions/v2/${file}`);
+    assert.equal(frame.page.__afterimageVersion, 'v2');
+    assert.equal(frame.location.pathname + frame.location.search + frame.location.hash, own);
+  }
+  // Outside its version folder (a page opened somewhere else) it does nothing.
+  const elsewhere = loadPage('/somewhere/index.html');
+  assert.equal(elsewhere.page.__afterimageVersion, undefined);
+  assert.equal(elsewhere.location.pathname, '/somewhere/index.html');
+});
+
+test('frame.js sends root-path navigations into the version and leaves the rest alone', async () => {
+  const frame = loadPage('/afterimage/versions/v2/index.html');
+  assert.equal(navigate(frame, `${origin}/about`), true);
+  assert.equal(navigate(frame, `${origin}/two.html?x=1`, { navigationType: 'replace' }), true);
+  assert.deepEqual(frame.redirects, [[`${origin}/afterimage/versions/v2/about`, 'auto'], [`${origin}/afterimage/versions/v2/two.html?x=1`, 'replace']]);
+
+  const untouched = [
+    [`${origin}/about`, { destination: { url: `${origin}/about`, sameDocument: true } }],
+    [`${origin}/about`, { navigationType: 'traverse' }],
+    [`${origin}/about`, { cancelable: false }],
+    [`${origin}/report.pdf`, { downloadRequest: 'report.pdf' }],
+    [`${origin}/form`, { formData: {} }],
+    [`${origin}/afterimage/versions/v1/index.html`],
+    ['https://example.com/about'],
+    // A blob: URL has this page's origin but no path to move. Redirecting it to itself would loop.
+    [`blob:${origin}/9f2c-4e1a`],
+    ['data:text/html,hi'],
+  ];
+  for (const [url, extra] of untouched) assert.equal(navigate(frame, url, extra), false, url);
+  assert.equal(frame.redirects.length, 2);
+  // Let the rejected redirect promises settle; an unhandled one would fail this file.
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+test('without the Navigation API, frame.js catches plain link clicks a router did not take', () => {
+  const frame = loadPage('/afterimage/versions/v2/index.html', { withNavigation: false });
+  const click = (href, extra = {}) => {
+    const link = { href, target: '', hasAttribute: () => false };
+    const target = Object.assign(new frame.Element(), { closest: () => link });
+    const event = { target, button: 0, defaultPrevented: false, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
+    frame.handlers.click(event);
+    return event.prevented;
+  };
+  assert.equal(click(`${origin}/two.html`), true);
+  assert.equal(click(`${origin}/two.html`, { defaultPrevented: true }), false);
+  assert.equal(click(`${origin}/two.html`, { metaKey: true }), false);
+  assert.equal(click(`blob:${origin}/9f2c-4e1a`), false);
+  assert.deepEqual(frame.redirects, [[`${origin}/afterimage/versions/v2/two.html`, 'assign']]);
 });

@@ -6,7 +6,11 @@
 // any framework. The alternatives in the spec (a relative base set through the framework's config, rewriting paths
 // at save time) need per-framework work and miss URLs built at runtime, so they were not used.
 //
-// Why this works, and its limits:
+// A classic worker, not a module one, so it runs wherever service workers do. It cannot import map.js (an ES module
+// that history.js uses in node), so the three helpers below are an inline copy; tests/runtime.test.mjs runs the same
+// table against both copies.
+//
+// Why this works:
 // - Scope. A navigation is routed by the destination URL's scope, so the frames (/afterimage/versions/vN/...) are
 //   controlled and the live app at / never is. If the app registers its own worker at scope /, the longer
 //   /afterimage/ scope still wins for the viewer and the frames, and ours never reaches the root.
@@ -24,38 +28,59 @@
 //   and sends them to /afterimage/versions/vN/about instead.
 // - Timing. The viewer waits until this worker is active before it creates frames, and install/activate take over
 //   at once (skipWaiting, clients.claim), so a frame's first request is already mapped.
-// - Known limits. Reloading a frame from the browser's menu, or going back or forward across a hard link (to an
-//   entry of another document), requests the rewritten /<path>, which is out of scope and loads the live app; the
-//   viewer never does either itself. A router's own back and forward stay in the document and work. Links that open
-//   a new tab (target=_blank) and POST forms reach the live app too. Without service workers (http on a non-localhost
-//   address, a host that does not serve sw.js as JavaScript) the viewer still renders, and a built app that uses root
-//   paths renders unstyled. Requests made by a version's own workers are not mapped.
-import { isServedPath, mapRequest, versionInPath } from './map.js';
+// - History. The viewer moves a frame to another version with location.replace, so its own version switches add no
+//   history entries for Back to land on.
+//
+// Known limits. Each of these reaches the live app at the root instead of the version:
+// - Reloading a frame from the browser's menu, and going back or forward to an entry of a document the frame has
+//   left: after a hard link, or after a router's pushState followed by a version switch. Those entries hold the
+//   rewritten /<path>, which is out of scope. A router's own back and forward inside one document work.
+// - Links that open elsewhere: target=_blank, _top and _parent (the navigation happens in another window, which
+//   frame.js does not run in), and download links (a download is not a navigation frame.js can redirect).
+// - POST forms, which cannot be re-sent to another URL.
+// - The app's own iframes: their navigations are their own, and an about:blank child is not controlled.
+// - Without the Navigation API (older Safari) frame.js sees only plain link clicks, not location.assign or forms.
+// - Requests made by a version's own Web Workers.
+// - Without service workers (http on a non-localhost address, a host that does not serve sw.js as JavaScript) the
+//   viewer still renders, and a built app that uses root paths renders unstyled.
+// And one that comes with versions sharing the live app's origin: an old version's code runs there. It can register
+// a worker at scope / (its register('/sw.js') resolves against the root) and write cookies, localStorage and
+// IndexedDB that the live app then reads.
+
+const served = '/afterimage';
+const versionId = /^v[1-9]\d*$/;
+
+// ---- inline copy of map.js (keep in step; tests/runtime.test.mjs checks both) ----
+function isServedPath(pathname) {
+  return pathname === served || pathname.startsWith(`${served}/`);
+}
+
+function versionInPath(pathname) {
+  const match = /^\/afterimage\/versions\/(v[1-9]\d*)\//.exec(pathname);
+  return match ? match[1] : null;
+}
+
+function mapRequest({ clientVersion, url }) {
+  if (typeof clientVersion !== 'string' || !versionId.test(clientVersion)) return url;
+  const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
+  const parsed = new URL(url, 'http://afterimage.invalid');
+  if (isServedPath(parsed.pathname)) return url;
+  parsed.pathname = `${served}/versions/${clientVersion}${parsed.pathname}`;
+  return absolute ? parsed.href : parsed.pathname + parsed.search + parsed.hash;
+}
+// ---- end of the copy ----
 
 const store = 'afterimage-clients';
 const keyFor = clientId => new URL(`/afterimage/__clients/${encodeURIComponent(clientId)}`, self.location.href).href;
-// A frame being created is not in clients.matchAll() until its document is ready, so a client learned this recently
-// is kept even when it is not listed yet. Frames load in parallel (the viewer shows two versions at once).
-const settleMs = 60_000;
-// clientId -> { id, at }: the version and when the worker learned it.
+// A frame being created is not in clients.matchAll() until its document is ready, and the viewer creates two at once.
+// So an entry is only dropped once its client has been listed and then is gone. Entries never listed (a navigation
+// that was abandoned) are kept, but only the newest few, so the store stays small without any timing.
+const unseenKept = 16;
+// clientId -> { id, seen }: the version, and whether the client has been listed yet.
 const versions = new Map();
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
-
-async function remember(clientId, entry) {
-  const cache = await caches.open(store);
-  await cache.put(keyFor(clientId), new Response(JSON.stringify(entry)));
-  // Frames come and go as the viewer switches versions; drop what belongs to clients that are gone.
-  const alive = new Set((await self.clients.matchAll({ includeUncontrolled: true })).map(client => client.id));
-  const gone = (known, { at }) => !alive.has(known) && Date.now() - at > settleMs;
-  for (const [known, value] of [...versions]) if (gone(known, value)) versions.delete(known);
-  for (const request of await cache.keys()) {
-    const known = decodeURIComponent(new URL(request.url).pathname.split('/').pop());
-    const value = await read(await cache.match(request));
-    if (!value || gone(known, value)) await cache.delete(request);
-  }
-}
 
 async function read(response) {
   try {
@@ -65,15 +90,51 @@ async function read(response) {
   }
 }
 
-async function recall(clientId) {
-  const value = await read(await (await caches.open(store)).match(keyFor(clientId)));
-  if (value) versions.set(clientId, value);
-  return value?.id;
+async function remember(clientId, entry) {
+  const cache = await caches.open(store);
+  await cache.put(keyFor(clientId), new Response(JSON.stringify(entry)));
+  // Frames come and go as the viewer switches versions; drop what belongs to clients that are gone.
+  const alive = new Set((await self.clients.matchAll({ includeUncontrolled: true })).map(client => client.id));
+  const unseen = [];
+  for (const request of await cache.keys()) {
+    const known = decodeURIComponent(new URL(request.url).pathname.split('/').pop());
+    const value = await read(await cache.match(request));
+    if (!value) {
+      await cache.delete(request);
+    } else if (alive.has(known)) {
+      if (!value.seen) await cache.put(request, new Response(JSON.stringify({ ...value, seen: true })));
+      versions.set(known, { ...value, seen: true });
+    } else if (value.seen) {
+      await cache.delete(request);
+      versions.delete(known);
+    } else {
+      unseen.push([request, known]);
+    }
+  }
+  // keys() lists entries oldest first, so the end of the list is the newest.
+  for (const [request, known] of unseen.slice(0, -unseenKept)) {
+    await cache.delete(request);
+    versions.delete(known);
+  }
 }
 
+// Storage can be blocked or full; then the request is treated as one from an unknown client and passes through.
+async function recall(clientId) {
+  try {
+    const value = await read(await (await caches.open(store)).match(keyFor(clientId)));
+    if (value) versions.set(clientId, value);
+    return value?.id;
+  } catch {
+    return undefined;
+  }
+}
+
+// The init is spelled out: a Request passed as init would drop its body's streaming mode. Only GET and HEAD get here.
 async function answer(request, id) {
   if (!id) return fetch(request);
-  const response = await fetch(new Request(mapRequest({ clientVersion: id, url: request.url }), request));
+  const { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal } = request;
+  const mapped = new Request(mapRequest({ clientVersion: id, url: request.url }), { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal });
+  const response = await fetch(mapped);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
@@ -84,13 +145,14 @@ self.addEventListener('fetch', event => {
   if (request.mode === 'navigate') {
     const id = versionInPath(url.pathname);
     if (id && event.resultingClientId) {
-      const entry = { id, at: Date.now() };
+      const entry = { id, seen: false };
       versions.set(event.resultingClientId, entry);
-      event.waitUntil(remember(event.resultingClientId, entry));
+      event.waitUntil(remember(event.resultingClientId, entry).catch(() => {}));
     }
     return;
   }
-  if (!event.clientId || isServedPath(url.pathname)) return;
+  // A static site has nothing that takes a POST, so other methods pass through with their bodies untouched.
+  if (!event.clientId || isServedPath(url.pathname) || (request.method !== 'GET' && request.method !== 'HEAD')) return;
   const known = versions.get(event.clientId)?.id;
   event.respondWith(known ? answer(request, known) : recall(event.clientId).then(id => answer(request, id)));
 });

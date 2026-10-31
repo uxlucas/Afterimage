@@ -247,12 +247,14 @@ test('assembleSite with the app returns the output folder and version count', as
   assert.deepEqual((await fs.readdir(outDir)).sort(), ['afterimage', 'assets', 'index.html']);
 });
 
-test('a missing runtime folder is not an error', async t => {
+test('a missing runtime folder stops the build and writes nothing', async t => {
   const dirs = await fixtures(t);
   const root = await twoVersions(t);
-  const result = await run(root, ['build'], { ...dirs, runtimeDir: path.join(dirs.runtimeDir, 'missing') });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(await exists(path.join(root, '.afterimage/site/afterimage/runtime.js')), false);
+  const missing = path.join(dirs.runtimeDir, 'missing');
+  const result = await run(root, ['build'], { ...dirs, runtimeDir: missing });
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, `The frame runtime is missing (${missing}). Reinstall afterimage-cli.\n`);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
 });
 
 test('a viewer that is not built says how to build it and writes nothing', async t => {

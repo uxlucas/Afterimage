@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameWindow, withoutHash, sameDocument, showsVersion } from '../src/viewer/frames.js';
+import { entryPath, frameWindow, replaceFrame, withoutHash, sameDocument, showsVersion } from '../src/viewer/frames.js';
 import { createUrlWriter } from '../src/viewer/state/urlWriter.js';
 
 // A frame whose window is same-origin, or one that navigated cross-origin: reading `document` throws there.
@@ -46,18 +46,42 @@ test('showsVersion survives an anchor link, and is false for a cross-origin or u
   assert.equal(showsVersion(sameOrigin('http://localhost/versions/v2/index.html'), null, page), false);
 });
 
-test('showsVersion trusts the frame runtime\'s mark over the URL it rewrote', () => {
+test('entryPath is where frame.js puts a version\'s entry page', () => {
+  assert.equal(entryPath('versions/v2/index.html'), '/');
+  assert.equal(entryPath('versions/v12/nested/index.html'), '/nested/');
+  assert.equal(entryPath('versions/v2/start.html'), '/start.html');
+});
+
+test('a frame with the runtime\'s mark shows a version only on that version\'s entry page', () => {
   const version = { id: 'v2', file: 'versions/v2/index.html' };
   const page = 'http://localhost/afterimage/index.html?version=v2';
+  // The runtime rewrote the URL to the app's own path, so location is what the app sees.
   const marked = (href, id) => {
     const frame = sameOrigin(href);
+    frame.contentWindow.location = new URL(href);
     frame.contentWindow.__afterimageVersion = id;
     return frame;
   };
-  assert.equal(showsVersion(marked('http://localhost/about', 'v2'), version, page), true);
-  assert.equal(showsVersion(marked('http://localhost/afterimage/versions/v2/index.html', 'v1'), version, page), false);
+  assert.equal(showsVersion(marked('http://localhost/', 'v2'), version, page), true);
+  assert.equal(showsVersion(marked('http://localhost/#faq', 'v2'), version, page), true);
+  // Another route or page of the same version is not the page being compared.
+  assert.equal(showsVersion(marked('http://localhost/about', 'v2'), version, page), false);
+  assert.equal(showsVersion(marked('http://localhost/?tab=2', 'v2'), version, page), false);
+  assert.equal(showsVersion(marked('http://localhost/', 'v1'), version, page), false);
+  assert.equal(showsVersion(marked('http://localhost/nested/', 'v2'), { id: 'v2', file: 'versions/v2/nested/index.html' }, page), true);
   // The live app at the root has no mark, and is not the version.
   assert.equal(showsVersion(sameOrigin('http://localhost/'), version, page), false);
+});
+
+test('replaceFrame moves a frame without a history entry, and sets src only on a frame with no window yet', () => {
+  const replaced = [];
+  const frame = { src: 'versions/v2/index.html', contentWindow: { location: { replace: url => replaced.push(url) } } };
+  replaceFrame(frame, 'http://localhost/afterimage/versions/v1/index.html');
+  assert.deepEqual(replaced, ['http://localhost/afterimage/versions/v1/index.html']);
+  assert.equal(frame.src, 'versions/v2/index.html');
+  const detached = { src: '', contentWindow: null };
+  replaceFrame(detached, 'http://localhost/afterimage/versions/v1/index.html');
+  assert.equal(detached.src, 'http://localhost/afterimage/versions/v1/index.html');
 });
 
 // ---- the URL writer (C1) ----

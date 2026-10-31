@@ -1,7 +1,8 @@
 // The end-to-end check every example is held to: build it with its own scripts, serve the output, and drive the
 // real viewer in Chrome. Task by task, new framework examples reuse checkExample unchanged.
 //
-// It waits on signals the page gives (a frame's load, the change list rendering), never on fixed sleeps.
+// It waits on signals the page gives (a frame's load, the change list rendering), never on fixed sleeps, with one
+// exception: showing that the live review did not store a count needs a wait past its longest delay.
 // The viewer has no test hooks, so it reads the viewer through what a visitor or a screen reader sees:
 //   - the pill button named "Highlight changes, N changes", which appears once the live review is ready
 //   - the "Show versions" button, which opens the panel (role dialog)
@@ -13,11 +14,13 @@
 //
 // expectChange is text the newest version adds or changes; it must appear in an Added or Changed row of the list.
 // A Removed row does not count: text that left the page is not what the newest version shows.
-// A version's frame passes when its body has visible text (trimmed innerText) and at least one element, and every
-// same-origin request it makes stays inside /afterimage/ or is answered by the worker. Anything else reached the live
-// app at the root, which can look right while showing the wrong version.
+// A version's frame passes when its body has visible text (trimmed innerText) and at least one element, and the
+// static server saw no request outside /afterimage/ while the viewer was open. A version's requests reach the server
+// under /afterimage/versions/ once the worker maps them; anything else reached the live app at the root, which can
+// look right while showing the wrong version. Only the steps that open the app at / itself may ask for root paths.
 // follow ({ link, shows }) clicks the link named `link` inside the newest version's frame and waits for `shows`:
-// the frame must still hold the same version afterwards.
+// the frame must still hold the same version afterwards, and the stored change count must not change.
+// Switching versions and pressing Back must never leave the frame on the live app.
 // If the viewer renames those labels, this is the one file to update.
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
@@ -27,14 +30,18 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { readConfig } from '../../src/cli/config.js';
 import { fileFor, requestPath, sendFile } from '../../src/cli/static-files.js';
+import { entryPath } from '../../src/viewer/frames.js';
 
 const loadTimeout = 15_000;
 const text = value => String(value).replace(/\s+/g, ' ').trim();
 
-// Serves a built site on a free port of its own. Returns { origin, close }.
+// Serves a built site on a free port of its own. Returns { origin, take, close }: take() returns the paths requested
+// since the last call. The favicon is the browser's own request, not the example's.
 async function serve(root) {
+  let seen = [];
   const server = http.createServer(async (req, res) => {
     const pathname = requestPath(req.url);
+    if (pathname !== null && pathname !== '/favicon.ico') seen.push(pathname);
     if (pathname === null) { res.writeHead(400).end(); return; }
     const file = fileFor(root, pathname);
     if (!file) { res.writeHead(403).end(); return; }
@@ -46,6 +53,11 @@ async function serve(root) {
   });
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
+    take() {
+      const taken = seen;
+      seen = [];
+      return taken;
+    },
     close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); })
   };
 }
@@ -63,13 +75,8 @@ function npmBuild(exampleDir) {
 function watchRequests(page, origin) {
   let failures = [];
   const ours = url => url.startsWith(`${origin}/`) && new URL(url).pathname !== '/favicon.ico';
-  const inFrame = request => { try { return request.frame() !== page.mainFrame(); } catch { return false; } };
   page.on('response', response => {
-    if (!ours(response.url())) return;
-    if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
-    else if (inFrame(response.request()) && !new URL(response.url()).pathname.startsWith('/afterimage/') && !response.fromServiceWorker()) {
-      failures.push(`left the version (served from the live root) ${response.url()}`);
-    }
+    if (ours(response.url()) && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   page.on('requestfailed', request => {
     if (ours(request.url())) failures.push(`${request.failure()?.errorText ?? 'failed'} ${request.url()}`);
@@ -91,19 +98,21 @@ function watchRequests(page, origin) {
 async function readFrame(page, version, shows = '') {
   const frame = page.locator('iframe[data-role="target"]');
   await frame.waitFor({ state: 'attached', timeout: loadTimeout });
-  await page.waitForFunction(({ id, file, shows }) => {
+  await page.waitForFunction(({ id, file, entry, shows }) => {
     const element = document.querySelector('iframe[data-role="target"]');
     try {
       const doc = element?.contentDocument;
       const win = element.contentWindow;
       if (!doc || doc.readyState !== 'complete' || !doc.body) return false;
       if (shows) return doc.body.innerText.includes(shows);
-      // Same rule as the viewer's showsVersion: the runtime's mark when there is one, the URL otherwise.
-      return win.__afterimageVersion !== undefined ? win.__afterimageVersion === id : new URL(win.location.href).pathname.endsWith(`/${file}`);
+      // Same rule as the viewer's showsVersion: the runtime's mark and the entry page's own path when there is a mark,
+      // the URL otherwise.
+      if (win.__afterimageVersion !== undefined) return win.__afterimageVersion === id && win.location.pathname + win.location.search === entry;
+      return new URL(win.location.href).pathname.endsWith(`/${file}`);
     } catch {
       return false;
     }
-  }, { id: version.id, file: version.file, shows }, { timeout: loadTimeout });
+  }, { id: version.id, file: version.file, entry: entryPath(version.file), shows }, { timeout: loadTimeout });
   return page.evaluate(() => {
     const element = document.querySelector('iframe[data-role="target"]');
     const doc = element.contentDocument;
@@ -129,7 +138,16 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     browser = await chromium.launch({ channel: 'chrome' });
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
     const requests = watchRequests(page, server.origin);
-    const noFailures = step => assert.deepEqual(requests.take(), [], `${step}: these requests failed`);
+    // atRoot: the step opened the app at / itself, so root paths are expected there.
+    const noFailures = (step, { atRoot = false } = {}) => {
+      const reached = server.take().filter(pathname => !atRoot && !pathname.startsWith('/afterimage/'));
+      assert.deepEqual([...requests.take(), ...reached.map(pathname => `reached the live app at the root: ${pathname}`)], [], `${step}: these requests failed`);
+    };
+    const viewer = query => page.goto(`${server.origin}/afterimage/?${query}`, { waitUntil: 'load', timeout: loadTimeout });
+    const highlight = page.getByRole('button', { name: /^Highlight changes, \d+ changes?$/ });
+    const storedCounts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
+      .filter(key => key.startsWith('afterimage-count:'))
+      .map(key => [key, JSON.parse(localStorage.getItem(key)).summary])));
     const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], followed: null, changes: null };
 
     // The app at the root loads as its own build does.
@@ -138,41 +156,74 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     const appBody = await page.evaluate(() => document.body.innerText.trim().length);
     assert.ok(appBody > 0 || await page.locator('body *').count() > 0, 'The app at / rendered an empty page');
     assert.equal(new URL(page.url()).pathname, '/', 'The app at / redirected away from the root');
-    noFailures('App at /');
+    noFailures('App at /', { atRoot: true });
     report.app = { title: await page.title(), textLength: appBody };
 
     // Every saved version renders on its own in the viewer's frame.
     for (const version of versions) {
-      await page.goto(`${server.origin}/afterimage/?version=${version.id}`, { waitUntil: 'load', timeout: loadTimeout });
+      await viewer(`version=${version.id}`);
       const frame = await readFrame(page, version);
       assert.ok(frame.hasContent, `${version.id} (${frame.href}) has an empty body`);
       noFailures(`Version ${version.id}`);
       report.versions.push({ id: version.id, name: version.name, textLength: frame.text.length });
     }
 
-    // A link inside the frame keeps the frame in the version it started in.
+    const [newest, previous] = versions;
+
+    // A link inside the frame keeps the frame in the version it started in. The page it leads to is not the one
+    // being compared, so the live review must not store a count for it.
     if (follow) {
-      const [newest] = versions;
-      await page.goto(`${server.origin}/afterimage/?version=${newest.id}`, { waitUntil: 'load', timeout: loadTimeout });
+      await viewer(`version=${newest.id}`);
       await readFrame(page, newest);
+      await highlight.waitFor({ timeout: loadTimeout });
+      await page.waitForFunction(() => Object.keys(localStorage).some(key => key.startsWith('afterimage-count:')), null, { timeout: loadTimeout });
+      const counts = await storedCounts();
       await page.frameLocator('iframe[data-role="target"]').getByRole('link', { name: follow.link }).click();
       const frame = await readFrame(page, newest, follow.shows);
       assert.equal(frame.version, newest.id, `After clicking "${follow.link}" the frame holds ${frame.href}, not ${newest.id}`);
+      // The review runs at most 500ms after the page last changed; twice that is past any run it would make.
+      await page.waitForTimeout(1000);
+      const after = await storedCounts();
+      for (const [key, summary] of Object.entries(counts)) assert.deepEqual(after[key], summary, `Following "${follow.link}" changed the stored count ${key}`);
       noFailures(`Following "${follow.link}" in ${newest.id}`);
       report.followed = { link: follow.link, path: frame.path };
     }
 
+    // Switching versions moves the frame without a history entry of its own, so Back leaves the viewer page instead of
+    // taking the frame to an earlier page, whose URL the runtime rewrote to the app's path (the live app).
+    await viewer(`version=${previous.id}`);
+    await readFrame(page, previous);
+    await viewer(`version=${newest.id}`);
+    await readFrame(page, newest);
+    await page.keyboard.press('[');
+    await readFrame(page, previous);
+    await page.evaluate(() => { document.querySelector('iframe[data-role="target"]').contentWindow.__beforeBack = true; });
+    // Only the frame navigating would leave the viewer page in place, and goBack waiting for it in vain.
+    await page.goBack({ waitUntil: 'load', timeout: loadTimeout }).catch(() => {});
+    await page.waitForFunction(() => {
+      try {
+        const win = document.querySelector('iframe[data-role="target"]')?.contentWindow;
+        return Boolean(win && !win.__beforeBack && win.document.readyState === 'complete');
+      } catch {
+        return false;
+      }
+    }, null, { timeout: loadTimeout });
+    const back = await page.evaluate(() => {
+      const win = document.querySelector('iframe[data-role="target"]').contentWindow;
+      return { mark: win.__afterimageVersion ?? null, path: win.location.pathname, href: win.location.href };
+    });
+    assert.ok(back.mark !== null || back.path.startsWith('/afterimage/'), `After switching versions and pressing Back the frame shows ${back.href}, the live app`);
+    noFailures('Back after switching versions');
+
     // The worker the viewer registered never takes over the app at the root.
     await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });
     assert.equal(await page.evaluate(() => Boolean(navigator.serviceWorker?.controller)), false, 'The app at / is controlled by a service worker after the viewer ran');
-    noFailures('App at / after the viewer');
+    noFailures('App at / after the viewer', { atRoot: true });
 
     // The two newest versions compared: highlights on, the change list names the change.
-    const [newest, previous] = versions;
-    await page.goto(`${server.origin}/afterimage/?version=${newest.id}&mode=compare&base=${previous.id}`, { waitUntil: 'load', timeout: loadTimeout });
+    await viewer(`version=${newest.id}&mode=compare&base=${previous.id}`);
     await readFrame(page, newest);
     // The pill shows this button, with the count, once the live review has finished.
-    const highlight = page.getByRole('button', { name: /^Highlight changes, \d+ changes?$/ });
     await highlight.waitFor({ timeout: loadTimeout });
     await highlight.click();
     await page.getByRole('button', { name: /^Show versions$|\. Show versions$/ }).first().click();

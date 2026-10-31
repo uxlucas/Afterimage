@@ -43,13 +43,17 @@ async function loadManifest() {
 // Saved built apps ask for root paths like /assets/x.js; the frame runtime's worker (sw.js, next to this page)
 // answers them from each version's own folder. Frames are created only once it is active, so a frame's first
 // requests already go through it. Where service workers are unavailable (an insecure origin, a host that won't
-// serve sw.js) the viewer renders anyway.
+// serve sw.js) the viewer renders anyway, and so it does when the worker is slow to activate.
+const RUNTIME_WAIT_MS = 3000;
 async function startRuntime() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    // A module worker, so it can import map.js; updateViaCache 'none' so a new build's map.js is never stale.
-    await navigator.serviceWorker.register('sw.js', { scope: './', type: 'module', updateViaCache: 'none' });
-    await navigator.serviceWorker.ready;
+    // Absolute, like the paths in frame.js and the worker: the history is always served at /afterimage/, and a
+    // relative path from /afterimage (no slash) would register the root's own /sw.js at scope /.
+    // The default updateViaCache already checks sw.js itself past the HTTP cache; 'none' keeps that true for
+    // anything it might import later.
+    await navigator.serviceWorker.register('/afterimage/sw.js', { scope: '/afterimage/', updateViaCache: 'none' });
+    await Promise.race([navigator.serviceWorker.ready, new Promise(resolve => setTimeout(resolve, RUNTIME_WAIT_MS))]);
   } catch (error) {
     console.warn('The frame runtime did not start, so built apps may render without their files.', error);
   }

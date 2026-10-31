@@ -80,6 +80,13 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
   } catch {
     throw new Error('The viewer is not built. Run "npm run build:viewer" first.');
   }
+  // Without the runtime the viewer still loads, but every built app in it renders without its files, so a package
+  // that lost it must fail here rather than ship.
+  try {
+    await fs.access(runtimeDir);
+  } catch {
+    throw new Error(`The frame runtime is missing (${runtimeDir}). Reinstall afterimage-cli.`);
+  }
   checkOut({ outDir, projectDir: path.resolve(projectDir), historyDir, sourceDir, includeApp });
   // Asked twice: the user's build command can remove or create out, so the answer before it may be stale at the swap.
   const outExists = async () => {
@@ -134,12 +141,7 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     for (const { id } of manifest.versions) {
       await fs.cp(path.join(historyDir, 'versions', id), path.join(served, 'versions', id), { recursive: true });
     }
-    // The runtime folder is filled by a later step; none yet is fine.
-    try {
-      await fs.cp(runtimeDir, served, { recursive: true });
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
+    await fs.cp(runtimeDir, served, { recursive: true });
 
     // Windows cannot rename over an existing folder, so the old site steps aside first and comes back if the swap fails.
     const existing = await outExists();

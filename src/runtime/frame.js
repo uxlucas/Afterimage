@@ -15,9 +15,11 @@
   history.replaceState(history.state, '', own + location.search + location.hash);
 
   // Where a navigation to `href` belongs: same-origin paths outside /afterimage/ move into this version. Anything
-  // else (another origin, the viewer, a path already in a version) is left alone and gets null.
+  // else (another origin, the viewer, a path already in a version) is left alone and gets null. So are blob:, data:
+  // and other non-http URLs: a blob: URL has this page's origin but no path to move, and would come back unchanged.
   const inVersion = href => {
     const url = new URL(href, location.href);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     if (url.origin !== location.origin || url.pathname === '/afterimage' || url.pathname.startsWith('/afterimage/')) return null;
     url.pathname = prefix + url.pathname;
     return url.href;
@@ -31,9 +33,13 @@
     navigation.addEventListener('navigate', event => {
       if (event.destination.sameDocument || !event.cancelable || event.navigationType === 'traverse' || event.downloadRequest !== null || event.formData) return;
       const target = inVersion(event.destination.url);
-      if (!target) return;
+      // Redirecting to where it already goes would only start this handler again.
+      if (!target || target === event.destination.url) return;
       event.preventDefault();
-      navigation.navigate(target, { history: event.navigationType === 'push' ? 'auto' : 'replace' });
+      const redirect = navigation.navigate(target, { history: event.navigationType === 'push' ? 'auto' : 'replace' });
+      // Both reject when the redirect is cut short (the viewer moves the frame meanwhile); that is not the app's error.
+      redirect.committed.catch(() => {});
+      redirect.finished.catch(() => {});
     });
     return;
   }

@@ -4,7 +4,7 @@ import { buildReview } from '../../engine/diff-records.js';
 import { summarize } from '../../engine/review.js';
 import { readCount } from '../../engine/review-cache.js';
 import { createQueue } from '../../engine/background-queue.js';
-import { showsVersion } from '../frames.js';
+import { replaceFrame, showsVersion } from '../frames.js';
 
 const LOAD_TIMEOUT_MS = 10000;
 const SETTLE_MS = 80; // same pause the live review takes after a load, for scripts that touch the page on start
@@ -45,7 +45,7 @@ function load(slot, version) {
     };
     const stop = () => { clearTimeout(timer); slot.frame.removeEventListener('load', onLoad); };
     slot.frame.addEventListener('load', onLoad);
-    slot.frame.src = new URL(version.file, location.href).href;
+    replaceFrame(slot.frame, new URL(version.file, location.href).href);
   });
 }
 

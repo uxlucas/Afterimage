@@ -26,7 +26,10 @@ async function fixtures(t) {
   await fs.mkdir(path.join(viewerDir, 'assets'), { recursive: true });
   await fs.writeFile(path.join(viewerDir, 'index.html'), '<title>viewer</title>');
   await fs.writeFile(path.join(viewerDir, 'assets/viewer.js'), 'viewer();');
-  return { viewerDir, runtimeDir: path.join(root, 'runtime') };
+  const runtimeDir = path.join(root, 'runtime');
+  await fs.mkdir(runtimeDir);
+  await fs.writeFile(path.join(runtimeDir, 'sw.js'), 'worker();');
+  return { viewerDir, runtimeDir };
 }
 
 async function run(cwd, args, extra = {}) {

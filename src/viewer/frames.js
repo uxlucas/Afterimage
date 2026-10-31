@@ -30,19 +30,36 @@ export function sameDocument(a, b) {
   return left !== null && left === withoutHash(b);
 }
 
+// Where a version's entry page sits once the frame runtime has rewritten its URL to the app's own path, the same way
+// frame.js does: versions/v2/index.html -> /, versions/v2/nested/index.html -> /nested/.
+export function entryPath(file) {
+  return file.replace(/^versions\/[^/]+/, '').replace(/(^|\/)index\.html$/, '$1');
+}
+
 // True when `frame` has finished loading `version`'s own page, give or take a hash. A version saved with the frame
-// runtime names itself, since its URL is rewritten to the app's own paths (any page or route of the version counts).
-// Versions saved before the runtime (Northwind) are told apart by URL.
+// runtime names itself, and its URL is the app's own path, so both must match: another page or route of the same
+// version is not the page being compared. Versions saved before the runtime (Northwind) are told apart by URL.
 export function showsVersion(frame, version, baseHref = globalThis.location?.href) {
   if (!version) return false;
   const win = frameWindow(frame);
   if (!win || win.document.readyState !== 'complete') return false;
-  if (win.__afterimageVersion !== undefined) return win.__afterimageVersion === version.id;
+  if (win.__afterimageVersion !== undefined) {
+    return win.__afterimageVersion === version.id && win.location.pathname + win.location.search === entryPath(version.file);
+  }
   try {
     return sameDocument(win.location.href, new URL(version.file, baseHref).href);
   } catch {
     return false;
   }
+}
+
+// Moves `frame` to `url` without adding a history entry. Changing src would add one, and Back would then take the
+// frame to its previous page by the URL the frame runtime rewrote it to (the app's own path), which is the live app.
+// location.replace is allowed on a window that went cross-origin too.
+export function replaceFrame(frame, url) {
+  const win = frame?.contentWindow;
+  if (win) win.location.replace(url);
+  else if (frame) frame.src = url;
 }
 
 // Runs `fn`, ignoring a SecurityError from a window that went cross-origin since it was bound.
