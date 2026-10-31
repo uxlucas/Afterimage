@@ -81,8 +81,13 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     throw new Error('The viewer is not built. Run "npm run build:viewer" first.');
   }
   checkOut({ outDir, projectDir: path.resolve(projectDir), historyDir, sourceDir, includeApp });
-  const existing = await fs.lstat(outDir).catch(() => null);
-  if (existing && !existing.isDirectory()) throw new Error(`"out" (${outDir}) exists and is not a folder. Remove it or point "out" at another path.`);
+  // Asked twice: the user's build command can remove or create out, so the answer before it may be stale at the swap.
+  const outExists = async () => {
+    const found = await fs.lstat(outDir).catch(() => null);
+    if (found && !found.isDirectory()) throw new Error(`"out" (${outDir}) exists and is not a folder. Remove it or point "out" at another path.`);
+    return Boolean(found);
+  };
+  await outExists();
   await removeStale(outDir);
 
   let app;
@@ -110,7 +115,8 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
         await ops.rename(from, to);
       } catch (again) {
         if (!lockedCodes.has(again.code)) throw again;
-        throw new Error(`Could not replace ${config.out}: a file in it is in use. Close anything serving it (like afterimage dev or a static server) and run build again. The previous site is unchanged.`, { cause: again });
+        // The caller adds what became of the old site, which depends on how far the swap got.
+        throw Object.assign(new Error(`Could not replace ${config.out}: a file in it is in use. Close anything serving it (like afterimage dev or a static server) and run build again.`, { cause: again }), { locked: true });
       }
     }
   };
@@ -136,7 +142,9 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     }
 
     // Windows cannot rename over an existing folder, so the old site steps aside first and comes back if the swap fails.
-    if (existing) await rename(outDir, previous);
+    const existing = await outExists();
+    const unchanged = error => { if (error.locked) error.message += ' The previous site is unchanged.'; return error; };
+    if (existing) await rename(outDir, previous).catch(error => { throw unchanged(error); });
     try {
       await rename(staging, outDir);
     } catch (error) {
@@ -148,7 +156,7 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
           throw new Error(`${error.message} The previous site could not be put back; it was left at ${previous}.`, { cause: error });
         }
       }
-      throw error;
+      throw existing ? unchanged(error) : error;
     }
     // The new site is already live, so failing to clear the old one is a warning, not a failed build.
     if (existing) {

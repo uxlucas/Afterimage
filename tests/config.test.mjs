@@ -73,3 +73,23 @@ test('a build folder source uses only config.exclude', () => {
   assert.deepEqual(projectExcludes(config), ['cache']);
   assert.deepEqual(projectExcludes({ ...config, exclude: [] }), []);
 });
+
+test('source, history and out are normalized when read', async t => {
+  const root = await temp(t);
+  await fs.writeFile(configPath(root), JSON.stringify({ source: 'src\\..', history: '.\\afterimage\\', out: 'x/../site/' }));
+  const config = await readConfig(root);
+  assert.deepEqual([config.source, config.history, config.out], ['.', 'afterimage', 'site']);
+  assert.ok(projectExcludes(config).includes('site'));
+});
+
+test('a path that is absolute or leaves the project is rejected by field name', async t => {
+  const root = await temp(t);
+  const absolute = path.resolve(os.tmpdir(), 'elsewhere');
+  for (const [field, value] of [['source', '..'], ['source', '../app'], ['out', absolute], ['history', 'a/../../h'], ['out', 'C:\\site'], ['out', '/site']]) {
+    await fs.writeFile(configPath(root), JSON.stringify({ [field]: value }));
+    await assert.rejects(readConfig(root), new RegExp(`needs "${field}" to be a folder inside the project`), `${field}=${value}`);
+  }
+  // A folder that merely starts with two dots is fine.
+  await fs.writeFile(configPath(root), JSON.stringify({ out: '..site' }));
+  assert.equal((await readConfig(root)).out, '..site');
+});

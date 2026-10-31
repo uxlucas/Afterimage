@@ -272,7 +272,6 @@ test('an out folder that would replace or sit inside the project, history or sou
   const root = await twoVersions(t);
   const cases = [
     ['.', /would replace/],
-    ['..', /would replace/],
     ['afterimage', /would replace/],
     ['afterimage/', /would replace/],
     ['dist', /would replace/],
@@ -400,6 +399,18 @@ describe('the swap', () => {
     assert.equal(await exists(path.join(path.dirname(site), left[0], 'index.html')), true);
   });
 
+  test('a locked new site whose restore also fails does not claim the old site is unchanged', async t => {
+    const { dirs, root, site } = await builtProject(t);
+    const { fsOps } = failing([2, 3, 4], 'EPERM');
+    await assert.rejects(assemble(root, dirs, { fsOps }), error => {
+      assert.match(error.message, /^Could not replace \.afterimage\/site: a file in it is in use\./);
+      assert.doesNotMatch(error.message, /unchanged/);
+      assert.match(error.message, /could not be put back; it was left at .*\.old\./);
+      return true;
+    });
+    assert.equal((await fs.readdir(path.dirname(site))).filter(name => name.endsWith('.old')).length, 1);
+  });
+
   test('failing to remove the old site warns and still builds', async t => {
     const { dirs, root, site } = await builtProject(t);
     const result = await assemble(root, dirs, { fsOps: { rm: async () => { throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' }); } } });
@@ -423,4 +434,53 @@ test('build outside a project points to init, and rejects stray arguments', asyn
   const help = await run(root, ['build', '--help']);
   assert.equal(help.code, 0);
   assert.match(help.stdout, /^Usage: afterimage build/);
+});
+
+test('an out that only normalizes to the output folder builds twice without nesting', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t, configWith(null, { source: '.', out: 'x/../site' }));
+  await fs.rm(path.join(root, 'page.txt'));
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Root app</h1>');
+  assert.equal((await run(root, ['save', 'Only version'])).code, 0);
+  for (let build = 0; build < 2; build += 1) assert.equal((await run(root, ['build'], dirs)).code, 0);
+  assert.deepEqual((await fs.readdir(path.join(root, 'site'))).sort(), ['afterimage', 'index.html']);
+  assert.equal((await run(root, ['save', 'Again'])).stdout.startsWith('Nothing changed'), true, 'a save still ignores the built site');
+});
+
+test('a source above the project and an absolute out are refused by the config', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  await writeConfig(root, configWith(copyBuild)).then(() => fs.writeFile(path.join(root, 'afterimage.config.json'), JSON.stringify({ source: '..', build: null })));
+  const above = await run(root, ['build'], dirs);
+  assert.equal(above.code, 1);
+  assert.match(above.stderr, /needs "source" to be a folder inside the project/);
+  await fs.writeFile(path.join(root, 'afterimage.config.json'), JSON.stringify({ source: 'dist', out: path.join(root, 'abs-site') }));
+  const absolute = await run(root, ['build'], dirs);
+  assert.equal(absolute.code, 1);
+  assert.match(absolute.stderr, /needs "out" to be a folder inside the project/);
+  assert.equal(await exists(path.join(root, 'abs-site')), false);
+});
+
+test('a build command that deletes the earlier site still builds', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t, configWith(`${copyBuild} && node -e "require('fs').rmSync('.afterimage',{recursive:true,force:true})"`));
+  assert.equal((await run(root, ['build'], dirs)).code, 0);
+  await fs.rm(path.join(root, '.afterimage/site/afterimage/runtime.js'), { force: true });
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual((await fs.readdir(path.join(root, '.afterimage'))).sort(), ['site']);
+  assert.equal(await exists(path.join(root, '.afterimage/site/afterimage/versions.json')), true);
+});
+
+test('a build command that creates the out folder does not break the swap', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t, configWith(`${copyBuild} && node -e "const fs=require('fs');if(process.env.MAKE_OUT){fs.mkdirSync('.afterimage/site',{recursive:true});fs.writeFileSync('.afterimage/site/made-by-build.txt','x')}"`));
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
+  process.env.MAKE_OUT = '1';
+  t.after(() => { delete process.env.MAKE_OUT; });
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await exists(path.join(root, '.afterimage/site/made-by-build.txt')), false, 'the created folder was replaced');
+  assert.equal(await exists(path.join(root, '.afterimage/site/afterimage/versions.json')), true);
+  assert.deepEqual(await fs.readdir(path.join(root, '.afterimage')), ['site']);
 });

@@ -8,8 +8,14 @@ const defaults = { source: '.', build: null, history: 'afterimage', out: '.after
 // Names that are the project's own files, not the prototype. They only matter when the prototype is the project root.
 const projectNames = ['node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName];
 
-// Same shape readSnapshot expects: forward slashes, no leading ./, no trailing slash.
-const cleanPath = value => value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+// Same shape readSnapshot expects: forward slashes, no leading ./, no trailing slash. "x/../site" is "site" and "src/.." is ".".
+const cleanPath = value => {
+  const cleaned = path.posix.normalize(value.replace(/\\/g, '/')).replace(/\/+$/, '').replace(/^\.\//, '');
+  return cleaned || '.';
+};
+
+// Afterimage only works inside the project, so an absolute path or one that climbs out of it is a mistake.
+const leavesProject = cleaned => cleaned.startsWith('/') || /^[a-zA-Z]:/.test(cleaned) || cleaned === '..' || cleaned.startsWith('../');
 
 function validate(raw) {
   const fail = problem => { throw new Error(`${configName} ${problem}.`); };
@@ -21,8 +27,12 @@ function validate(raw) {
   if (config.build !== null && typeof config.build !== 'string') fail('needs "build" to be a string or null');
   if (typeof config.type !== 'string') fail('needs "type" to be a string');
   if (!Array.isArray(config.exclude) || config.exclude.some(entry => typeof entry !== 'string')) fail('needs "exclude" to be a list of strings');
-  const { source, build, history, out, exclude, type } = config;
-  return { source, build, history, out, exclude: [...exclude], type };
+  const [source, history, out] = ['source', 'history', 'out'].map(key => {
+    const cleaned = cleanPath(config[key]);
+    if (leavesProject(cleaned)) fail(`needs "${key}" to be a folder inside the project, not an absolute path or one that starts with ".."`);
+    return cleaned;
+  });
+  return { source, build: config.build, history, out, exclude: [...config.exclude], type: config.type };
 }
 
 export async function readConfig(projectDir) {
