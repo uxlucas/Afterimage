@@ -135,6 +135,10 @@ async function answer(request, id) {
   const { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal } = request;
   const mapped = new Request(mapRequest({ clientVersion: id, url: request.url }), { method, headers, mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal });
   const response = await fetch(mapped);
+  // A request with redirect 'manual' gets an opaque redirect (status 0), which a new Response cannot carry. It is
+  // passed back as it is: a redirect has no body or base URL to keep, and the page follows it or not as it asked.
+  // redirect 'error' needs nothing: fetch rejects on a redirect, as it would have without the worker.
+  if (response.type === 'opaqueredirect' || response.status === 0) return response;
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 

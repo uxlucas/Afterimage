@@ -12,7 +12,29 @@
   // The app's own path at the root, so its router matches: .../vN/index.html -> /, .../vN/about/index.html -> /about/,
   // .../vN/two.html -> /two.html. Relative URLs now resolve against it too; the worker maps the result back.
   const own = location.pathname.slice(prefix.length).replace(/(^|\/)index\.html$/, '$1');
+  // The file this document was loaded from, so the viewer can tell its own page from one reached by a hard link.
+  window.__afterimageFile = location.pathname;
   history.replaceState(history.state, '', own + location.search + location.hash);
+
+  // The page the viewer compares: the frame's path as the app leaves it on its own. An app that redirects on load
+  // (replaceState to /home, / to /en) settles there. The person's first press or key inside the frame freezes it, so
+  // a route they open afterwards is not the page being compared. currententrychange follows the app's own
+  // same-document moves once they commit; load catches the rest, and is the only check without the Navigation API.
+  // Limits: without it, a move after load is missed; a redirect to another document (location.replace('/en')) loads
+  // another file, which the viewer does not compare; a press before the app has moved freezes the path early.
+  window.__afterimagePath = own + location.search;
+  let touched = false;
+  const follow = () => {
+    if (!touched) window.__afterimagePath = location.pathname + location.search;
+  };
+  const freeze = () => {
+    follow();
+    touched = true;
+  };
+  window.addEventListener('pointerdown', freeze, true);
+  window.addEventListener('keydown', freeze, true);
+  window.addEventListener('load', follow);
+  if (window.navigation) navigation.addEventListener('currententrychange', follow);
 
   // Where a navigation to `href` belongs: same-origin paths outside /afterimage/ move into this version. Anything
   // else (another origin, the viewer, a path already in a version) is left alone and gets null. So are blob:, data:

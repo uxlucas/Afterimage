@@ -38,13 +38,23 @@ export function entryPath(file) {
 
 // True when `frame` has finished loading `version`'s own page, give or take a hash. A version saved with the frame
 // runtime names itself, and its URL is the app's own path, so both must match: another page or route of the same
-// version is not the page being compared. Versions saved before the runtime (Northwind) are told apart by URL.
+// version is not the page being compared. frame.js records where the app settled before the person touched the
+// frame (__afterimagePath), so an app that redirects on load still counts, and the file the document came from
+// (__afterimageFile), so a page reached by a hard link does not. A frame.js without them is held to the entry
+// page's path. Versions saved before the runtime (Northwind) are told apart by URL.
 export function showsVersion(frame, version, baseHref = globalThis.location?.href) {
   if (!version) return false;
   const win = frameWindow(frame);
   if (!win || win.document.readyState !== 'complete') return false;
   if (win.__afterimageVersion !== undefined) {
-    return win.__afterimageVersion === version.id && win.location.pathname + win.location.search === entryPath(version.file);
+    if (win.__afterimageVersion !== version.id) return false;
+    const here = win.location.pathname + win.location.search;
+    if (win.__afterimagePath === undefined) return here === entryPath(version.file);
+    try {
+      return here === win.__afterimagePath && win.__afterimageFile === new URL(version.file, baseHref).pathname;
+    } catch {
+      return false;
+    }
   }
   try {
     return sameDocument(win.location.href, new URL(version.file, baseHref).href);

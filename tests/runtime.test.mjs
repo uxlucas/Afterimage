@@ -69,12 +69,12 @@ function startWorker(world) {
 
 // Dispatches a fetch event the way the browser would and returns what the page gets, or null when the worker
 // left the request to the network.
-async function dispatch(listeners, { url, mode = 'no-cors', method = 'GET', clientId = '', resultingClientId = '' }) {
+async function dispatch(listeners, { url, mode = 'no-cors', method = 'GET', redirect = 'follow', clientId = '', resultingClientId = '' }) {
   let answer = null;
   const pending = [];
   listeners.fetch({
     // Request refuses mode navigate outside a browser, so a navigation is a plain object with the fields the worker reads.
-    request: mode === 'navigate' ? { url, mode, method } : new Request(url, { mode: method === 'GET' ? mode : 'same-origin', method }),
+    request: mode === 'navigate' ? { url, mode, method } : new Request(url, { mode: method === 'GET' ? mode : 'same-origin', method, redirect }),
     clientId, resultingClientId,
     respondWith: value => { answer = Promise.resolve(value); },
     waitUntil: promise => pending.push(promise),
@@ -131,8 +131,8 @@ test('the tag is the first child of <head>, whatever its case or attributes', ()
 });
 
 test('a byte order mark, a doctype and comments before <head> are stepped over', () => {
-  const page = '﻿<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>\n';
-  assert.equal(injectFrameScript(page, 'v1'), `﻿<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>${tag('v1')}\n`);
+  const page = '\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>\n';
+  assert.equal(injectFrameScript(page, 'v1'), `\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>${tag('v1')}\n`);
   // The same bytes read as latin1, which is how a save reads them.
   assert.equal(injectFrameScript('\xEF\xBB\xBF<p>hi</p>', 'v1'), `\xEF\xBB\xBF${tag('v1')}<p>hi</p>`);
 });
@@ -145,7 +145,7 @@ test('a document with no <head> gets the tag after <html>, after the doctype, or
 });
 
 test('injecting never touches another byte, and is never doubled', () => {
-  const page = '<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset="utf-8">\r\n</head><body>é</body></html>';
+  const page = '<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset="utf-8">\r\n</head><body>\u00e9</body></html>';
   const once = injectFrameScript(page, 'v4');
   assert.equal(once.replace(tag('v4'), ''), page);
   assert.equal(injectFrameScript(once, 'v4'), once);
@@ -279,6 +279,22 @@ test('clients that are never listed (abandoned navigations) are kept only up to 
   assert.equal(await bodyOf(await asset(listeners, 'frame-20')), 'body of /afterimage/versions/v20/assets/a.js');
 });
 
+test('a redirect: manual request is still mapped, and its opaque redirect comes back as it is', async () => {
+  const world = workerScope({ alive: ['frame-1'] });
+  const asked = [];
+  // What the browser gives a manual-redirect fetch that meets a redirect: status 0, which new Response refuses.
+  const redirected = { type: 'opaqueredirect', status: 0, statusText: '', headers: new Headers(), body: null };
+  world.network = async request => {
+    asked.push([new URL(request.url).pathname, request.redirect]);
+    return redirected;
+  };
+  const { listeners } = startWorker(world);
+  await navigateTo(listeners, 'v2', 'frame-1');
+  const answer = await dispatch(listeners, { url: `${origin}/old-path`, mode: 'same-origin', redirect: 'manual', clientId: 'frame-1' });
+  assert.equal(answer, redirected);
+  assert.deepEqual(asked, [['/afterimage/versions/v2/old-path', 'manual']]);
+});
+
 test('when the Cache API fails, requests still go through instead of failing', async () => {
   const world = workerScope({ alive: [], brokenCaches: true });
   const { listeners } = startWorker(world);
@@ -367,6 +383,30 @@ test('frame.js sends root-path navigations into the version and leaves the rest 
   assert.equal(frame.redirects.length, 2);
   // Let the rejected redirect promises settle; an unhandled one would fail this file.
   await new Promise(resolve => setImmediate(resolve));
+});
+
+test('frame.js records where the app settles on its own, and stops following at the first touch', () => {
+  for (const withNavigation of [true, false]) {
+    for (const touch of ['pointerdown', 'keydown']) {
+      const frame = loadPage('/afterimage/versions/v2/index.html?lang=en', { withNavigation });
+      const moveTo = next => {
+        frame.page.history.replaceState(null, '', next);
+        frame.handlers.currententrychange?.();
+      };
+      assert.equal(frame.page.__afterimageFile, '/afterimage/versions/v2/index.html');
+      assert.equal(frame.page.__afterimagePath, '/?lang=en');
+      // The app redirects itself on load. With the Navigation API that is seen at once, without it at load.
+      moveTo('/home');
+      assert.equal(frame.page.__afterimagePath, withNavigation ? '/home' : '/?lang=en');
+      frame.handlers.load();
+      assert.equal(frame.page.__afterimagePath, '/home');
+      // The person presses inside the frame, then the app moves on: that is no longer the app's own page.
+      frame.handlers[touch]();
+      moveTo('/about');
+      frame.handlers.load();
+      assert.equal(frame.page.__afterimagePath, '/home', `${touch}, navigation ${withNavigation}`);
+    }
+  }
 });
 
 test('without the Navigation API, frame.js catches plain link clicks a router did not take', () => {

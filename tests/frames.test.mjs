@@ -73,6 +73,27 @@ test('a frame with the runtime\'s mark shows a version only on that version\'s e
   assert.equal(showsVersion(sameOrigin('http://localhost/'), version, page), false);
 });
 
+test('a marked frame shows its version where the app settled on its own, and nowhere else', () => {
+  const version = { id: 'v2', file: 'versions/v2/index.html' };
+  const page = 'http://localhost/afterimage/?version=v2';
+  // What frame.js leaves: the file the document came from, and the path the app settled on before any touch.
+  const settled = (href, { path, file = '/afterimage/versions/v2/index.html', id = 'v2' }) => {
+    const frame = sameOrigin(href);
+    Object.assign(frame.contentWindow, { location: new URL(href), __afterimageVersion: id, __afterimagePath: path, __afterimageFile: file });
+    return frame;
+  };
+  // The app redirected on load (replaceState to /home): that is its page now.
+  assert.equal(showsVersion(settled('http://localhost/home', { path: '/home' }), version, page), true);
+  assert.equal(showsVersion(settled('http://localhost/home#top', { path: '/home' }), version, page), true);
+  // The person opened a route after the path froze.
+  assert.equal(showsVersion(settled('http://localhost/about', { path: '/home' }), version, page), false);
+  assert.equal(showsVersion(settled('http://localhost/about', { path: '/' }), version, page), false);
+  // A hard link loaded another file of the version, which settled on its own path.
+  assert.equal(showsVersion(settled('http://localhost/two.html', { path: '/two.html', file: '/afterimage/versions/v2/two.html' }), version, page), false);
+  // Another version's frame.
+  assert.equal(showsVersion(settled('http://localhost/home', { path: '/home', id: 'v1', file: '/afterimage/versions/v1/index.html' }), version, page), false);
+});
+
 test('replaceFrame moves a frame without a history entry, and sets src only on a frame with no window yet', () => {
   const replaced = [];
   const frame = { src: 'versions/v2/index.html', contentWindow: { location: { replace: url => replaced.push(url) } } };

@@ -10,7 +10,8 @@
 //   - the list's role=listitem rows, each holding one change, and the data-kind on its button (added, changed, removed)
 //   - the iframe[data-role="target"] that holds the shown version
 //   - window.__afterimageVersion in that frame, which the frame runtime sets for versions saved with it (their URL
-//     is rewritten to the app's own paths, so the URL alone no longer says which version a frame holds)
+//     is rewritten to the app's own paths, so the URL alone no longer says which version a frame holds), with
+//     __afterimagePath (where the app settled before anyone touched the frame) and __afterimageFile (the file loaded)
 //
 // expectChange is text the newest version adds or changes; it must appear in an Added or Changed row of the list.
 // A Removed row does not count: text that left the page is not what the newest version shows.
@@ -105,9 +106,14 @@ async function readFrame(page, version, shows = '') {
       const win = element.contentWindow;
       if (!doc || doc.readyState !== 'complete' || !doc.body) return false;
       if (shows) return doc.body.innerText.includes(shows);
-      // Same rule as the viewer's showsVersion: the runtime's mark and the entry page's own path when there is a mark,
-      // the URL otherwise.
-      if (win.__afterimageVersion !== undefined) return win.__afterimageVersion === id && win.location.pathname + win.location.search === entry;
+      // Same rule as the viewer's showsVersion: with the runtime's mark, the path the app settled on (or the entry
+      // page's path, from a frame.js that does not record it) in the version's own file; the URL otherwise.
+      if (win.__afterimageVersion !== undefined) {
+        if (win.__afterimageVersion !== id) return false;
+        const here = win.location.pathname + win.location.search;
+        if (win.__afterimagePath === undefined) return here === entry;
+        return here === win.__afterimagePath && win.__afterimageFile === new URL(file, location.href).pathname;
+      }
       return new URL(win.location.href).pathname.endsWith(`/${file}`);
     } catch {
       return false;
@@ -121,10 +127,11 @@ async function readFrame(page, version, shows = '') {
   });
 }
 
-// checkExample(exampleDir, { expectChange, follow, build }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, follow, build, appPath }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
 // build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
-export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild }) {
+// appPath is where the app at / ends up once loaded, for an app that moves itself (a locale or sign-in redirect).
+export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild, appPath = '/' }) {
   assert.ok(expectChange, 'checkExample needs expectChange: text the newest version adds.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
@@ -155,7 +162,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     assert.equal(response.status(), 200, `The app at / answered ${response.status()}`);
     const appBody = await page.evaluate(() => document.body.innerText.trim().length);
     assert.ok(appBody > 0 || await page.locator('body *').count() > 0, 'The app at / rendered an empty page');
-    assert.equal(new URL(page.url()).pathname, '/', 'The app at / redirected away from the root');
+    assert.equal(new URL(page.url()).pathname, appPath, `The app at / ended up at ${new URL(page.url()).pathname}, not ${appPath}`);
     noFailures('App at /', { atRoot: true });
     report.app = { title: await page.title(), textLength: appBody };
 
@@ -165,7 +172,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
       const frame = await readFrame(page, version);
       assert.ok(frame.hasContent, `${version.id} (${frame.href}) has an empty body`);
       noFailures(`Version ${version.id}`);
-      report.versions.push({ id: version.id, name: version.name, textLength: frame.text.length });
+      report.versions.push({ id: version.id, name: version.name, textLength: frame.text.length, path: frame.path });
     }
 
     const [newest, previous] = versions;

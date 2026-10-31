@@ -51,3 +51,21 @@ test('a multi-page plain site keeps hard links inside the version', async t => {
   });
   assert.equal(report.followed.path, '/two.html');
 });
+
+test('an app that moves itself to another path on load still gets its review', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.cp(fixture('multipage'), dir, { recursive: true });
+  afterimage(dir, 'init');
+  afterimage(dir, 'save', 'One');
+  // The second version redirects itself once loaded, as a locale or sign-in redirect would. frame.js's own load
+  // listener runs first, so only the Navigation API's currententrychange sees the move.
+  const page = path.join(dir, 'index.html');
+  const redirect = '<script>addEventListener(\'load\', () => history.replaceState(null, \'\', \'/home\'));</script>\n  </body>';
+  await fs.writeFile(page, (await fs.readFile(page, 'utf8')).replace('<h1>Page one</h1>', '<h1>Page one, revised</h1>').replace('</body>', redirect));
+  afterimage(dir, 'save', 'Two');
+
+  // checkExample's compare step waits for the pill's count, which the review gives only to the page it compares.
+  const report = await checkExample(dir, { expectChange: 'Page one, revised', build: () => afterimage(dir, 'build'), appPath: '/home' });
+  assert.deepEqual(report.versions.map(version => [version.id, version.path]), [['v2', '/home'], ['v1', '/']]);
+});

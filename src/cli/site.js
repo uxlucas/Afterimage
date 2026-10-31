@@ -141,7 +141,9 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     for (const { id } of manifest.versions) {
       await fs.cp(path.join(historyDir, 'versions', id), path.join(served, 'versions', id), { recursive: true });
     }
-    await fs.cp(runtimeDir, served, { recursive: true });
+    // map.js is for node (history.js injects with it); frame.js and sw.js carry their own copies of what they need,
+    // so the browser never loads it and it is not served.
+    await fs.cp(runtimeDir, served, { recursive: true, filter: source => path.relative(runtimeDir, source) !== 'map.js' });
 
     // Windows cannot rename over an existing folder, so the old site steps aside first and comes back if the swap fails.
     const existing = await outExists();

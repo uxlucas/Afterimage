@@ -247,6 +247,24 @@ test('assembleSite with the app returns the output folder and version count', as
   assert.deepEqual((await fs.readdir(outDir)).sort(), ['afterimage', 'assets', 'index.html']);
 });
 
+test('the packaged runtime is served as frame.js and sw.js only, byte for byte', async t => {
+  const { viewerDir } = await fixtures(t);
+  const root = await twoVersions(t);
+  // No runtimeDir: the package's own src/runtime, which still holds map.js for node.
+  const result = await run(root, ['build'], { viewerDir });
+  assert.equal(result.code, 0, result.stderr);
+  const served = path.join(root, '.afterimage/site/afterimage');
+  const runtime = new URL('../src/runtime/', import.meta.url);
+  const inRuntime = await fs.readdir(runtime);
+  assert.ok(inRuntime.includes('map.js'));
+  const shipped = [];
+  for (const name of inRuntime) if (await exists(path.join(served, name))) shipped.push(name);
+  assert.deepEqual(shipped.sort(), ['frame.js', 'sw.js']);
+  for (const name of shipped) assert.deepEqual(await fs.readFile(path.join(served, name)), await fs.readFile(new URL(name, runtime)));
+  // Nothing else in the folder came from the runtime: the rest is the viewer and the history.
+  assert.deepEqual((await fs.readdir(served)).sort(), ['assets', 'frame.js', 'index.html', 'sw.js', 'versions', 'versions.json']);
+});
+
 test('a missing runtime folder stops the build and writes nothing', async t => {
   const dirs = await fixtures(t);
   const root = await twoVersions(t);
