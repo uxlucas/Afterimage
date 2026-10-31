@@ -95,30 +95,65 @@ function npmBuild(exampleDir) {
 // Collects every same-origin request that failed, per step. The favicon is not part of the example, and neither are
 // the appMisses: paths the app's own build asks for and does not have, which the live app misses too. They are
 // matched on the app's own path, so /afterimage/versions/vN/x counts as /x.
-// A request fails with a status of 400 or more, or with a network error. net::ERR_ABORTED is not one: it is a request
-// the page or the browser called off. Chrome reports every answered HEAD that way, Next stops reading prefetch bodies
-// it is done with (on the live app at / as much as in a version), and a frame that moves on cancels what it had in
-// flight. Whether the version rendered, and stayed itself, is what the steps check.
+// A request fails with a status of 400 or more, or with a network error. net::ERR_ABORTED (the request was called off)
+// counts too, except in the three cases where calling it off is not a failure:
+//   - it had already been answered: Chrome reports every answered HEAD that way, and Next stops reading bodies it is
+//     done with (on the live app at / as much as in a version). Its status was checked when the answer came.
+//   - it is a prefetch (a next-router-prefetch header, or prefetch in Sec-Purpose or Purpose), which a router drops
+//     once it no longer needs it.
+//   - its frame went away or navigated after it started: a frame the viewer moves on cancels what it had in flight.
+//     That is checked in take(), not when the request fails, because the viewer's location.replace aborts the old
+//     page's requests before the frame's navigation commits.
 function watchRequests(page, origin, appMisses) {
   let failures = [];
+  let aborted = [];
+  const answered = new WeakSet();
+  // How many times each frame has navigated, and that count for each request when it started.
+  const moves = new WeakMap();
+  const startedAt = new WeakMap();
+  // A request a service worker made has no frame, and Playwright throws when asked for one.
+  const frameOf = request => {
+    try {
+      return request.frame();
+    } catch {
+      return null;
+    }
+  };
+  const isPrefetch = request => {
+    const headers = request.headers();
+    return 'next-router-prefetch' in headers || /prefetch/i.test(`${headers['sec-purpose'] ?? ''} ${headers.purpose ?? ''}`);
+  };
   const ours = url => {
     if (!url.startsWith(`${origin}/`)) return false;
     const { pathname } = new URL(url);
     const own = pathname.replace(/^\/afterimage\/versions\/v[1-9]\d*(?=\/)/, '');
     return pathname !== '/favicon.ico' && !appMisses.some(pattern => pattern.test(own));
   };
+  page.on('framenavigated', frame => moves.set(frame, (moves.get(frame) ?? 0) + 1));
+  page.on('request', request => {
+    const frame = frameOf(request);
+    if (frame) startedAt.set(request, moves.get(frame) ?? 0);
+  });
   page.on('response', response => {
+    answered.add(response.request());
     if (ours(response.url()) && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   page.on('requestfailed', request => {
+    if (!ours(request.url())) return;
     const error = request.failure()?.errorText ?? 'failed';
-    if (error !== 'net::ERR_ABORTED' && ours(request.url())) failures.push(`${error} ${request.url()}`);
+    if (error !== 'net::ERR_ABORTED') failures.push(`${error} ${request.url()}`);
+    else if (!answered.has(request) && !isPrefetch(request)) aborted.push(request);
   });
+  const stayed = request => {
+    const frame = frameOf(request);
+    return Boolean(frame) && !frame.isDetached() && (moves.get(frame) ?? 0) === startedAt.get(request);
+  };
   return {
     // Returns what failed since the last call and starts over.
     take() {
-      const taken = failures;
+      const taken = [...failures, ...aborted.filter(stayed).map(request => `net::ERR_ABORTED ${request.url()}`)];
       failures = [];
+      aborted = [];
       return taken;
     }
   };
@@ -159,12 +194,14 @@ async function readFrame(page, version, shows = '') {
   });
 }
 
-// checkExample(exampleDir, { expectChange, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, press, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
 // build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
 // appPath is where the app at / ends up once loaded, for an app that moves itself (a locale or sign-in redirect).
 // appMisses (RegExps on the app's own path) are files the app asks for and its own build lacks; see watchRequests.
-export async function checkExample(exampleDir, { expectChange, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
+// press ({ button, shows }) clicks the button named `button` inside the newest version's frame and waits for its name
+// to become `shows`: only a page whose scripts ran (one that hydrated) can change it.
+export async function checkExample(exampleDir, { expectChange, press, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
   assert.ok(expectChange, 'checkExample needs expectChange: text the newest version adds.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
@@ -191,7 +228,7 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     const storedCounts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
       .filter(key => key.startsWith('afterimage-count:'))
       .map(key => [key, JSON.parse(localStorage.getItem(key)).summary])));
-    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], followed: null, changes: null };
+    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], pressed: null, followed: null, changes: null };
 
     // The app at the root loads as its own build does.
     const response = await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });
@@ -213,6 +250,16 @@ export async function checkExample(exampleDir, { expectChange, follow, build = n
     }
 
     const [newest, previous] = versions;
+
+    if (press) {
+      await viewer(`version=${newest.id}`);
+      await readFrame(page, newest);
+      const inFrame = page.frameLocator('iframe[data-role="target"]');
+      await inFrame.getByRole('button', { name: press.button, exact: true }).click();
+      await inFrame.getByRole('button', { name: press.shows, exact: true }).waitFor({ timeout: loadTimeout });
+      noFailures(`Pressing "${press.button}" in ${newest.id}`);
+      report.pressed = press;
+    }
 
     // A link inside the frame keeps the frame in the version it started in. The page it leads to is not the one
     // being compared, so the live review must not store a count for it.

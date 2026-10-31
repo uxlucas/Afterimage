@@ -302,22 +302,33 @@ test('a redirect: manual request is still mapped, and its opaque redirect comes 
 });
 
 // A host without clean URLs: it answers each path in `files` with that status, and anything else with a 404.
-// Returns the requests it saw, as "METHOD /path".
+// Returns what it saw: `asked`, the requests as "METHOD /path"; `cancelled`, the paths whose body was cancelled
+// unread; `sent`, the responses it gave.
 function fileHost(world, files) {
   const asked = [];
+  const cancelled = [];
+  const sent = [];
   world.network = async request => {
     const { pathname } = new URL(request.url);
     asked.push(`${request.method} ${pathname}`);
     const status = files[pathname] ?? 404;
-    return new Response(status === 404 ? 'Not found' : `body of ${pathname}`, { status, headers: { 'Content-Type': 'text/html' } });
+    const text = status === 404 ? 'Not found' : `body of ${pathname}`;
+    // Pulled only when read, so a body nobody reads is still open until it is cancelled.
+    const body = status === 304 ? null : new ReadableStream({
+      pull(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); },
+      cancel() { cancelled.push(pathname); },
+    });
+    const response = new Response(body, { status, headers: { 'Content-Type': 'text/html' } });
+    sent.push(response);
+    return response;
   };
-  return asked;
+  return { asked, cancelled, sent };
 }
 
 test('a page missing from a version is found the way a host with clean URLs finds it', async () => {
   const world = workerScope({ alive: ['frame-1'] });
   const v2 = '/afterimage/versions/v2';
-  const asked = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200, [`${v2}/broken`]: 500 });
+  const { asked, cancelled } = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200, [`${v2}/broken`]: 500 });
   const { listeners } = startWorker(world);
   const open = file => dispatch(listeners, { url: `${origin}${v2}/${file}`, mode: 'navigate', resultingClientId: 'frame-1' });
 
@@ -327,18 +338,23 @@ test('a page missing from a version is found the way a host with clean URLs find
   assert.equal(await about.text(), `body of ${v2}/about.html`);
   assert.equal(about.url, '');
   assert.deepEqual(asked.splice(0), [`GET ${v2}/about`, `GET ${v2}/about.html`]);
+  // The 404 it replaced is not left open.
+  assert.deepEqual(cancelled.splice(0), [`${v2}/about`]);
   // A folder with an index.html is a redirect to the path with a slash, as a host gives it.
   const docs = await open('docs?tab=2');
   assert.equal(docs.status, 301);
   assert.equal(docs.headers.get('Location'), `${origin}${v2}/docs/?tab=2`);
   assert.deepEqual(asked.splice(0), [`GET ${v2}/docs`, `GET ${v2}/docs.html`, `HEAD ${v2}/docs/index.html`]);
-  // Nowhere to be found: the host's own 404.
+  assert.deepEqual(cancelled.splice(0).sort(), [`${v2}/docs`, `${v2}/docs.html`, `${v2}/docs/index.html`]);
+  // Nowhere to be found: the host's own 404, and only the probes' bodies are cancelled.
   const missing = await open('missing');
   assert.equal(missing.status, 404);
   assert.equal(await missing.text(), 'Not found');
   asked.splice(0);
-  // A path ending in / or .html, and any answer but a 404, are the host's to give.
-  for (const [file, status] of [['gone.html', 404], ['empty/', 404], ['broken', 500]]) {
+  assert.deepEqual(cancelled.splice(0).sort(), [`${v2}/missing.html`, `${v2}/missing/index.html`]);
+  // A path ending in / or in a file name with an extension, and any answer but a 404, are the host's to give, with
+  // no probes.
+  for (const [file, status] of [['gone.html', 404], ['about.txt', 404], ['empty/', 404], ['broken', 500]]) {
     assert.equal((await open(file)).status, status, file);
     assert.deepEqual(asked.splice(0), [`GET ${v2}/${file}`], file);
   }
@@ -347,7 +363,7 @@ test('a page missing from a version is found the way a host with clean URLs find
 test('a clean URL a version asks for is found the same way, and redirected within the app\'s own paths', async () => {
   const world = workerScope({ alive: ['frame-1'] });
   const v2 = '/afterimage/versions/v2';
-  const asked = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200 });
+  const { asked, sent } = fileHost(world, { [`${v2}/about.html`]: 200, [`${v2}/docs/index.html`]: 200, [`${v2}/cached.css`]: 304 });
   const { listeners } = startWorker(world);
   await navigateTo(listeners, 'v2', 'frame-1');
   asked.splice(0);
@@ -361,7 +377,17 @@ test('a clean URL a version asks for is found the same way, and redirected withi
   const docs = await dispatch(listeners, { url: `${origin}/docs`, mode: 'cors', clientId: 'frame-1' });
   assert.equal(docs.status, 301);
   assert.equal(docs.headers.get('Location'), `${origin}/docs/`);
+  asked.splice(0);
   assert.equal((await dispatch(listeners, { url: `${origin}/api/missing`, mode: 'cors', clientId: 'frame-1' })).status, 404);
+  // A missing asset costs one request.
+  asked.splice(0);
+  assert.equal((await dispatch(listeners, { url: `${origin}/assets/gone.js`, clientId: 'frame-1' })).status, 404);
+  assert.deepEqual(asked.splice(0), [`GET ${v2}/assets/gone.js`]);
+  // Any other 3xx the host gives (a 304 for the page's own conditional request) is rewrapped like every answer, so
+  // it carries no version-folder URL.
+  const cached = await dispatch(listeners, { url: `${origin}/cached.css`, clientId: 'frame-1' });
+  assert.equal(cached.status, 304);
+  assert.equal(sent.includes(cached), false);
 });
 
 test('when the Cache API fails, requests still go through instead of failing', async () => {

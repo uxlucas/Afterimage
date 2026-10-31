@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,10 +37,12 @@ test('vite-react: home and /about render inside the viewer, the live app at / is
 
 test('next-static: home and /about render inside the viewer, the live app at / is untouched', async () => {
   const dir = example('next-static');
-  // Next 16.4.3 on Windows writes a nested page's prefetch segment as about/__next.about/__PAGE__.txt (it names the
-  // file from a path.relative, which has backslashes there) and then asks for about/__next.about.__PAGE__.txt. The
-  // live app at / misses it the same way, and Next falls back to about.txt. Elsewhere the names agree.
-  const appMisses = process.platform === 'win32' ? [/^\/about\/__next\.about\.__PAGE__\.txt$/] : [];
+  // Next 16.4.3's export (next/dist/export/index.js) names a segment file from path.relative, then replaces only "/"
+  // with ".". On Windows that path has backslashes, so the build writes about/__next.about/__PAGE__.txt, while the
+  // router asks for about/__next.about.__PAGE__.txt and falls back to about.txt when it is missing. The committed
+  // history was built on Windows, so its versions miss the file on every OS, and so does the live app at / when it is
+  // built on Windows. A build elsewhere writes the dot form, which the live app then finds.
+  const appMisses = [/^\/about\/__next\.about\.__PAGE__\.txt$/];
   const report = await checkExample(dir, { expectChange: 'Launch day is Friday', follow: { link: 'About this site', shows: 'A second page' }, appMisses });
   assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
   // The App Router took the click (the document is still the entry page) and moved to its own clean path.
@@ -61,12 +64,37 @@ test('astro: both pages render inside the viewer, and a hard link stays in the v
 
 test('sveltekit-static: both prerendered routes render inside the viewer, and the page hydrates', async () => {
   const dir = example('sveltekit-static');
-  const report = await checkExample(dir, { expectChange: 'Welcome back to the studio', follow: { link: 'About this site', shows: 'A second route' } });
+  const report = await checkExample(dir, {
+    expectChange: 'Welcome back to the studio',
+    // The counter's state changes only once the page has hydrated.
+    press: { button: 'Count is 0', shows: 'Count is 1' },
+    follow: { link: 'About this site', shows: 'A second route' },
+  });
   assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
-  // Only a hydrated page has the router that takes the click, so the document is still the entry page.
+  assert.ok(report.pressed);
+  // The router took the click too, so the document is still the entry page.
   assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
   const site = path.join(dir, '.afterimage/site');
   assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'build/index.html')));
+});
+
+// The harness itself: a version that lost one of its files must fail the check, or the passes above mean nothing.
+test('the check fails when a version is missing a file it loads', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.cp(fixture('multipage'), dir, { recursive: true });
+  afterimage(dir, 'init');
+  afterimage(dir, 'save', 'One');
+  const page = path.join(dir, 'index.html');
+  await fs.writeFile(page, (await fs.readFile(page, 'utf8')).replace('<h1>Page one</h1>', '<h1>Page one, revised</h1>'));
+  afterimage(dir, 'save', 'Two');
+
+  // Removed from the built site only, so the saved history still verifies.
+  const build = () => {
+    afterimage(dir, 'build');
+    rmSync(path.join(dir, '.afterimage/site/afterimage/versions/v2/style.css'));
+  };
+  await assert.rejects(checkExample(dir, { expectChange: 'Page one, revised', build }), /Version v2: these requests failed[\s\S]*404 \S+\/style\.css/);
 });
 
 test('a multi-page plain site keeps hard links inside the version', async t => {

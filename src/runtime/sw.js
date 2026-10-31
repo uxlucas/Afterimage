@@ -32,7 +32,8 @@
 //   Whatever serves the version folders may do neither (afterimage dev and plain file servers do not), so a 404 for
 //   a path in a version, page or subresource, is tried again here the same way: <path>.html answers in its place,
 //   and <path>/index.html turns it into a redirect to <path>/. The app sees the path it asked for, as on such a host.
-//   A path ending in / or .html, and any answer other than 404, are left as the host gave them.
+//   A path ending in / or in a file name with an extension (/x.js, /about.html, Next's /about.txt), and any answer
+//   other than 404, are left as the host gave them, so a missing asset costs no extra requests.
 // - Timing. The viewer waits until this worker is active before it creates frames, and install/activate take over
 //   at once (skipWaiting, clients.claim), so a frame's first request is already mapped.
 // - History. The viewer moves a frame to another version with location.replace, so its own version switches add no
@@ -48,6 +49,8 @@
 // - The app's own iframes: their navigations are their own, and an about:blank child is not controlled.
 // - Without the Navigation API (older Safari) frame.js sees only plain link clicks, not location.assign or forms.
 // - Requests made by a version's own Web Workers.
+// - Hosts that answer a missing file with 403 instead of 404 (S3 and similar object stores) get no clean-URL
+//   fallback: /about stays a 404 inside a version when only about.html exists (a miss, not the live app).
 // - Without service workers (http on a non-localhost address, a host that does not serve sw.js as JavaScript) the
 //   viewer still renders, and a built app that uses root paths renders unstyled.
 // And one that comes with versions sharing the live app's origin: an old version's code runs there. It can register
@@ -144,30 +147,41 @@ function like(request, url, method = request.method) {
   return new Request(url, { method, headers, mode: mode === 'navigate' ? 'same-origin' : mode, credentials, cache, redirect, referrer, referrerPolicy, integrity, signal });
 }
 
-// The response with no URL of its own (see Response URL above). Redirects are passed back as they are: a redirect has
-// no body or base URL to keep. One with redirect 'manual' is opaque (status 0), which a new Response cannot carry,
-// and the page follows it or not as it asked; the only other redirects here are the clean-URL ones made below.
-// redirect 'error' needs nothing: fetch rejects on a redirect, as it would have without the worker.
+// The response with no URL of its own (see Response URL above). A request with redirect 'manual' gets an opaque
+// redirect (status 0), which a new Response cannot carry. It is passed back as it is: a redirect has no body or base
+// URL to keep, and the page follows it or not as it asked. redirect 'error' needs nothing: fetch rejects on a
+// redirect, as it would have without the worker.
 function plain(response) {
-  if (response.type === 'opaqueredirect' || response.status === 0 || (response.status >= 300 && response.status < 400)) return response;
+  if (response.type === 'opaqueredirect' || response.status === 0) return response;
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-// Clean URLs (see above). `found` is the host's answer for `inVersion`, the path in the version folder; `asked` is the
-// URL the request was made with, which a redirect adds the slash to, so the page goes on to ask for the path it would
-// on such a host.
+// A response that is not passed on. Its body would otherwise stay open until the browser collects it.
+const drop = response => response.body?.cancel().catch(() => {});
+
+// What the page gets for `found`, the host's answer for `inVersion` (the path in the version folder), with clean URLs
+// (see above): the host's answer or <path>.html, without a URL of their own, or a redirect. `asked` is the URL the
+// request was made with, which the redirect adds the slash to, so the page goes on to ask for the path it would on
+// such a host. The redirect goes back as Response.redirect made it, not through plain().
 async function withCleanUrls(request, inVersion, asked, found) {
-  if (found.status !== 404) return found;
+  const { pathname } = new URL(inVersion);
+  const name = pathname.slice(pathname.lastIndexOf('/') + 1);
+  if (found.status !== 404 || !name || /\.[^.]+$/.test(name)) return plain(found);
   const at = suffix => {
     const url = new URL(inVersion);
     url.pathname += suffix;
     return url.href;
   };
-  const { pathname } = new URL(inVersion);
-  if (pathname.endsWith('/') || pathname.toLowerCase().endsWith('.html')) return found;
   const page = await fetch(like(request, at('.html')));
-  if (page.ok) return page;
-  if (!(await fetch(like(request, at('/index.html'), 'HEAD'))).ok) return found;
+  if (page.ok) {
+    drop(found);
+    return plain(page);
+  }
+  drop(page);
+  const index = await fetch(like(request, at('/index.html'), 'HEAD'));
+  drop(index);
+  if (!index.ok) return plain(found);
+  drop(found);
   const slashed = new URL(asked);
   slashed.pathname += '/';
   return Response.redirect(slashed.href, 301);
@@ -176,7 +190,7 @@ async function withCleanUrls(request, inVersion, asked, found) {
 async function answer(request, id) {
   if (!id) return fetch(request);
   const inVersion = mapRequest({ clientVersion: id, url: request.url });
-  return plain(await withCleanUrls(request, inVersion, request.url, await fetch(like(request, inVersion))));
+  return withCleanUrls(request, inVersion, request.url, await fetch(like(request, inVersion)));
 }
 
 self.addEventListener('fetch', event => {
@@ -192,7 +206,7 @@ self.addEventListener('fetch', event => {
       event.waitUntil(remember(event.resultingClientId, entry).catch(() => {}));
     }
     // Answered here only for the clean URLs; a page the host has comes back with its own status, headers and body.
-    event.respondWith(fetch(request).then(found => withCleanUrls(request, request.url, request.url, found)).then(plain));
+    event.respondWith(fetch(request).then(found => withCleanUrls(request, request.url, request.url, found)));
     return;
   }
   // A static site has nothing that takes a POST, so other methods pass through with their bodies untouched.
