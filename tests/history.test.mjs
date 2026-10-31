@@ -181,6 +181,19 @@ test('Hidden files are skipped instead of saved, and links still fail', async t 
   assert.equal((await readSnapshot(sourceDir, { exclude: ['link.html'] })).has('link.html'), false);
 });
 
+test('A saved version with a hidden file or source map added is refused, even though save would skip them', async t => {
+  const { historyDir, options } = await fixture(t);
+  const before = await fs.readFile(path.join(historyDir, 'versions.json'));
+  for (const [file, pattern] of [['.env', /.env/], ['x.map', /x.map/], ['.hidden/a.txt', /.hidden/]]) {
+    await write(path.join(historyDir, 'versions', 'v1'), { [file]: 'added later' });
+    await assert.rejects(verifyHistory(historyDir), pattern);
+    await assert.rejects(saveVersion(options, { name: 'Must fail' }), pattern);
+    assert.deepEqual(await fs.readFile(path.join(historyDir, 'versions.json')), before);
+    await fs.rm(path.join(historyDir, 'versions', 'v1', file.split('/')[0]), { recursive: true });
+    await verifyHistory(historyDir);
+  }
+});
+
 test('Files the operating system drops in folders are skipped, not saved and not fatal', async t => {
   const { historyDir, sourceDir, options } = await fixture(t);
   const junk = ['.DS_Store', '._index.html', 'Thumbs.db', 'desktop.ini'];

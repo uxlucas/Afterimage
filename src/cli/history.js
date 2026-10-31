@@ -15,7 +15,9 @@ export const isSystemFile = name => ['.DS_Store', 'Thumbs.db', 'desktop.ini'].in
 const isExcluded = (relative, exclude) => exclude.some(entry => relative === entry || relative.startsWith(`${entry}/`));
 const cleanExclude = entry => entry.replace(/^\.\//, '').replace(/\/+$/, '');
 
-export async function readSnapshot(directory, { exclude = [] } = {}) {
+// Strict is for saved snapshots: anything save would have skipped (hidden files, source maps) means the folder was
+// edited after saving, and a deploy copying it would publish that file.
+export async function readSnapshot(directory, { exclude = [], strict = false } = {}) {
   const excluded = exclude.map(cleanExclude);
   const files = new Map();
   async function visit(relative = '') {
@@ -25,12 +27,16 @@ export async function readSnapshot(directory, { exclude = [] } = {}) {
       const name = relative ? `${relative}/${entry.name}` : entry.name;
       // Excludes come first so a project can leave out a folder (a linked node_modules, say) without it being inspected.
       if (isSystemFile(entry.name) || isExcluded(name, excluded)) continue;
-      if (entry.name.startsWith('.')) continue;
+      if (entry.name.startsWith('.')) {
+        if (strict) throw new Error(`Unexpected hidden file in a saved version: ${name}`);
+        continue;
+      }
       if (entry.isSymbolicLink()) throw new Error(`Remove the link from the public prototype, or add it to exclude: ${name}`);
       const extension = path.extname(name).toLowerCase();
       if (entry.isDirectory()) await visit(name);
-      else if (entry.isFile() && skippedExtensions.has(extension)) continue;
-      else if (entry.isFile() && publicExtensions.has(extension)) files.set(name, await fs.readFile(path.join(directory, name)));
+      else if (entry.isFile() && skippedExtensions.has(extension)) {
+        if (strict) throw new Error(`Unexpected file in a saved version: ${name}`);
+      } else if (entry.isFile() && publicExtensions.has(extension)) files.set(name, await fs.readFile(path.join(directory, name)));
       else throw new Error(`Unsupported file in the prototype: ${name}. Add it to exclude if it is not part of the prototype.`);
     }
   }
@@ -72,7 +78,7 @@ export async function verifyHistory(historyDir) {
     if (!expected.has(name) && !isSystemFile(name)) throw new Error(`Unlisted snapshot found at ${path.join(versionsDir, name)}. Resolve it before saving or deploying.`);
   }
   for (const version of manifest?.versions ?? []) {
-    const files = await readSnapshot(path.join(versionsDir, version.id));
+    const files = await readSnapshot(path.join(versionsDir, version.id), { strict: true });
     if (fingerprint(files) !== version.sha256) {
       throw new Error(`${version.id} has changed since it was saved. Restore its original files; saved versions are never edited.`);
     }
