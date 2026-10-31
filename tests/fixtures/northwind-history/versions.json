@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "versions": [
+    {
+      "id": "v3",
+      "name": "Passkeys",
+      "label": "Version 3",
+      "file": "versions/v3/index.html",
+      "notes": [
+        "Added sign in with passkey.",
+        "Marked the last used method.",
+        "Google and Apple share one row to keep the card short."
+      ],
+      "savedAt": "2026-10-31T14:05:00.000Z",
+      "sha256": "85dec3f7700c45aad83b2f37a6af079ba871fa6fb5770ee5fecd91278f4dedf7"
+    },
+    {
+      "id": "v2",
+      "name": "Email first",
+      "label": "Version 2",
+      "file": "versions/v2/index.html",
+      "notes": [
+        "Dropped the password: email sends a sign-in link.",
+        "Added Google and Apple."
+      ],
+      "savedAt": "2026-10-29T17:40:00.000Z",
+      "sha256": "503442a80483fdbf97cacb84200d6b6b2574573f2d8b07390ca0401c2f3df916"
+    },
+    {
+      "id": "v1",
+      "name": "Password sign-in",
+      "label": "Version 1",
+      "file": "versions/v1/index.html",
+      "notes": [
+        "Email and password, with a reset link."
+      ],
+      "savedAt": "2026-10-27T11:15:00.000Z",
+      "sha256": "2080d5baa6b4a94b99a2fac69f1f6733bb33c98544f40f0e8175adf2097a2aac"
+    }
+  ]
+}
