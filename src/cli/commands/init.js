@@ -75,13 +75,17 @@ function writePackageText(original, value) {
   return original === null || /\n$/.test(original) ? text + eol : text;
 }
 
-// Reads one answer from the terminal. A closed stdin (Ctrl-D, EOF) counts as no answer instead of hanging.
-// Tests pass their own ctx.ask.
+// The code Node's own aborted prompts use. An ask function rejects with it when the user cancels.
+const abortCode = 'ABORT_ERR';
+
+// Reads one answer from the terminal. A closed stdin (Ctrl-D, EOF) counts as no answer instead of hanging, and
+// Ctrl-C aborts the whole init. Tests pass their own ctx.ask.
 async function askInTerminal(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const closed = new Promise(resolve => rl.once('close', () => resolve('')));
+  const interrupted = new Promise((_, reject) => rl.once('SIGINT', () => reject(Object.assign(new Error('Prompt cancelled.'), { code: abortCode }))));
   try {
-    return await Promise.race([rl.question(`${question} `), closed]);
+    return await Promise.race([rl.question(`${question} `), closed, interrupted]);
   } finally {
     rl.close();
   }
@@ -274,16 +278,24 @@ export async function run(args, ctx) {
 
   // Plan first, write after. package.json is read before the config step so a bad one stops init before any question,
   // and detection (which reads package.json) still sees the project as it was.
-  const packagePlan = await planPackage(cwd);
-  const configPlan = await planConfig(cwd, flags, prompt);
-  const plans = [
-    configPlan,
-    packagePlan,
-    await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
-    await planLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore),
-    await planVercel(cwd, prompt),
-    await planNetlify(cwd)
-  ];
+  let plans;
+  try {
+    const packagePlan = await planPackage(cwd);
+    const configPlan = await planConfig(cwd, flags, prompt);
+    plans = [
+      configPlan,
+      packagePlan,
+      await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
+      await planLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore),
+      await planVercel(cwd, prompt),
+      await planNetlify(cwd)
+    ];
+  } catch (error) {
+    // Ctrl-C at a prompt. Nothing has been written yet, so stopping here is clean. 130 is the shell's code for SIGINT.
+    if (error?.code !== abortCode) throw error;
+    stderr.write('Stopped. Nothing was changed.\n');
+    return 130;
+  }
   for (const plan of plans) await plan.apply?.();
 
   const changes = plans.map(plan => plan.change).filter(Boolean);

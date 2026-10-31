@@ -502,3 +502,28 @@ test('next with a server and --source, without a TTY, uses the folder given', as
   const config = await readConfig(root);
   assert.deepEqual({ source: config.source, build: config.build, type: config.type }, { source: 'static', build: null, type: 'plain' });
 });
+
+// A cancelled prompt (Ctrl-C) rejects with Node's abort code; ask can be told to do that at the Nth question.
+for (const [title, setup, args] of [
+  ['the folder question', async root => root, []],
+  ['the vercel.json question', async root => { await write(root, 'index.html', '<h1>Hi</h1>'); await write(root, 'vercel.json', JSON.stringify({ buildCommand: 'npm run build' })); }, []]
+]) {
+  test(`Ctrl-C at ${title} stops with exit 130 and writes nothing`, async t => {
+    const root = await temp(t);
+    await setup(root);
+    const before = await snapshot(root);
+    const out = [];
+    const err = [];
+    const code = await main(['init', ...args], {
+      cwd: root,
+      stdout: { write: text => out.push(text) },
+      stderr: { write: text => err.push(text) },
+      isTTY: true,
+      ask: async () => { throw Object.assign(new Error('Prompt cancelled.'), { code: 'ABORT_ERR' }); }
+    });
+    assert.equal(code, 130);
+    assert.equal(err.join(''), 'Stopped. Nothing was changed.\n');
+    assert.equal(out.join(''), '');
+    assert.deepEqual(await snapshot(root), before);
+  });
+}
