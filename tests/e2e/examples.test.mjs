@@ -237,7 +237,8 @@ test('an app that moves itself to another path on load still gets its review', a
 
 // A temporary copy of an example that has its own history and can be saved to, so the original's history is never
 // touched. Its node_modules is a junction to the original's (it works on Windows without administrator rights), so the
-// copy builds with the same install. Build output and the viewer's site are left behind; the copy makes its own.
+// copy builds with the same install. The temp folder must be on the same drive as the checkout, since SvelteKit cannot
+// build across drives. Build output and the viewer's site are left behind; the copy makes its own.
 async function copyExample(t, name) {
   const source = example(name);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), `afterimage-e2e-${name}-`));

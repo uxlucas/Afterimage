@@ -25,7 +25,11 @@ jobs:
       - run: npm test
       - id: chrome
         uses: browser-actions/setup-chrome@v2
-      # pretest:e2e builds the viewer and installs the examples first.
+      # pretest:e2e builds the viewer and installs the examples first. The examples' copies link back to their installs, and
+      # SvelteKit cannot build across drives, so the temp folder goes on the checkout's drive (D: on Windows runners, not C:).
       - run: npm run test:e2e
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}

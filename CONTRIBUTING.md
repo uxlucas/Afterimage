@@ -39,7 +39,7 @@ The unit tests, with `node:test`. They need no browser and take well under a min
 npm run test:e2e
 ```
 
-The end-to-end tests. Before they run, `pretest:e2e` builds the viewer and runs `npm run install:examples`, which installs each example's own dependencies. Each test then builds an example with its own scripts, serves the result from a local static server, and drives the real viewer in Chrome through `playwright-core`, which uses the Chrome installed on your machine. They run one at a time and take a few minutes.
+The end-to-end tests. Before they run, `pretest:e2e` builds the viewer and runs `npm run install:examples`, which installs each example's own dependencies. Each test then builds an example with its own scripts, serves the result from a local static server, and drives the real viewer in Chrome through `playwright-core`, which uses the Chrome installed on your machine. They run one at a time and take a few minutes. On Windows, keep the checkout on the same drive as your temp folder (usually C:): each test copies an example there and links it back to the example's install, and SvelteKit can't build across drives.
 
 `install:examples` skips an example that already has a `node_modules` folder. After you change an example's dependencies, delete its `node_modules` and run it again.
 
