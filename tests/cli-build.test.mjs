@@ -303,7 +303,8 @@ test('assembleSite with the app returns the output folder and version count', as
   assert.deepEqual((await fs.readdir(outDir)).sort(), ['afterimage', 'assets', 'index.html']);
 });
 
-test('the packaged runtime is served as frame.js and sw.js only, byte for byte', async t => {
+// overlay.js is the pill a plain page loads with a script tag; bundled apps import the same file from the package.
+test('the packaged runtime is served as frame.js, overlay.js and sw.js only, byte for byte', async t => {
   const { viewerDir } = await fixtures(t);
   const root = await twoVersions(t);
   // No runtimeDir: the package's own src/runtime, which still holds map.js for node.
@@ -315,10 +316,10 @@ test('the packaged runtime is served as frame.js and sw.js only, byte for byte',
   assert.ok(inRuntime.includes('map.js'));
   const shipped = [];
   for (const name of inRuntime) if (await exists(path.join(served, name))) shipped.push(name);
-  assert.deepEqual(shipped.sort(), ['frame.js', 'sw.js']);
+  assert.deepEqual(shipped.sort(), ['frame.js', 'overlay.js', 'sw.js']);
   for (const name of shipped) assert.deepEqual(await fs.readFile(path.join(served, name)), await fs.readFile(new URL(name, runtime)));
   // Nothing else in the folder came from the runtime: the rest is the viewer and the history.
-  assert.deepEqual((await fs.readdir(served)).sort(), ['assets', 'frame.js', 'index.html', 'sw.js', 'versions', 'versions.json']);
+  assert.deepEqual((await fs.readdir(served)).sort(), ['assets', 'frame.js', 'index.html', 'overlay.js', 'sw.js', 'versions', 'versions.json']);
 });
 
 test('a missing runtime folder stops the build and writes nothing', async t => {

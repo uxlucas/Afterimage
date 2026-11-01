@@ -253,6 +253,13 @@ test('Esc closes whatever is on top, in order: sheet, panel, compare, then nothi
   assert.deepEqual(resolveShortcut('escape', envOf()), gone);
 });
 
+// Opened from the pill on a prototype, the viewer is a layer in a frame, and Esc with nothing else open closes the layer.
+test('Esc with nothing open leaves a framed viewer, and only then', () => {
+  assert.deepEqual(resolveShortcut('escape', envOf({}, { framed: true })), { consumed: true, dispatch: [], effect: 'leaveViewer' });
+  assert.equal(resolveShortcut('escape', envOf({ panelOpen: true }, { framed: true })).effect, 'closePanel');
+  assert.equal(resolveShortcut('escape', envOf({ mode: 'compare' }, { framed: true })).effect, 'leaveCompare');
+});
+
 test('with the sheet open, only Esc, ? and letting go of B act', () => {
   const env = envOf({}, { helpOpen: true });
   assert.deepEqual(resolveShortcut({ type: 'stepVersion', delta: 1 }, env), gone);

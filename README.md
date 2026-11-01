@@ -17,7 +17,7 @@ npx afterimage init
 
 A plain HTML folder with no `package.json` needs `npm init -y` first.
 
-`init` works out what your prototype is: a plain HTML folder, a Vite app, a Next.js static export, an Astro site, or SvelteKit with `@sveltejs/adapter-static`. It writes `afterimage.config.json`, three scripts in `package.json`, lines in `.gitattributes` and `.gitignore`, and host config for Vercel and Netlify, then lists every file it changed. When it can't tell which folder holds the prototype, it asks. You can also tell it:
+`init` works out what your prototype is: a plain HTML folder, a Vite app, a Next.js static export, an Astro site, or SvelteKit with `@sveltejs/adapter-static`. It puts the Afterimage pill on your prototype and makes `npm run dev` start Afterimage beside your app. It also writes `afterimage.config.json`, lines in `.gitattributes` and `.gitignore`, and host config for Vercel and Netlify, then lists every file it changed. For Next.js, Astro and SvelteKit it prints the one import that adds the pill. When it can't tell which folder holds the prototype, it asks. You can also tell it:
 
 ```bash
 npx afterimage init --source dist --build "npm run build"
@@ -25,11 +25,19 @@ npx afterimage init --source dist --build "npm run build"
 
 ## Setup prompt
 
-Working with Claude Code, Cursor or another coding agent? Paste the setup prompt from [docs/agents.md](docs/agents.md) instead. It installs Afterimage and runs `init` with `--agent claude` or `--agent cursor`, which copies Afterimage's instructions into the project, where your agent reads them. It also passes `--no-input`, so init never waits on a question. Then it saves a first version and gives you the viewer's link. After that, "save a version called Remember me" works in plain words.
+Working with Claude Code, Cursor or another coding agent? Paste the setup prompt from [docs/agents.md](docs/agents.md) instead. It starts with "Add Afterimage so I can track this prototype's versions." The agent installs Afterimage, puts the pill on your prototype, saves a first version and starts your dev server with Afterimage beside it. It also copies Afterimage's instructions into the project, so "save a version called Remember me" works in plain words later.
 
 ## Usage
 
-Save a version whenever the prototype is worth keeping:
+Run your prototype:
+
+```bash
+npm run dev
+```
+
+The pill sits at the bottom right of the page. Save keeps the current state as the next version. History opens every version over the page, with what changed between any two, and Esc closes it. Once you deploy, the same pill on the live site shows everyone the versions, without Save.
+
+You can also save from the command line, or have your agent do it:
 
 ```bash
 npx afterimage save "First version"
@@ -38,13 +46,7 @@ npx afterimage save "Remember me" --note "Keeps people signed in for 30 days."
 
 A save runs your build first when the prototype has one, then stores the result as the next version: v1, v2, v3. If nothing changed since the last version, nothing is saved.
 
-Open the history while you work:
-
-```bash
-npx afterimage dev
-```
-
-It prints the viewer's address, `http://localhost:4321/afterimage/` unless that port is busy. Your app keeps running on its own dev server. In the viewer, `[` and `]` step through versions, `H` highlights what changed, `C` compares two versions, and `?` lists every shortcut.
+`npm run dev` also prints the history's own address, `http://localhost:4321/afterimage/` unless that port is busy. In the viewer, `[` and `]` step through versions, `H` highlights what changed, `C` compares two versions, and `?` lists every shortcut.
 
 Commit `afterimage/` with the rest of the project, along with `afterimage.config.json`, `package.json` and your lockfile, `.gitattributes`, and `vercel.json` or `netlify.toml`. `afterimage/` holds every saved version, and a fresh checkout can't get back a version that isn't in git. `.gitattributes` stops git from changing a saved version's line endings, which would break its fingerprint on another machine.
 

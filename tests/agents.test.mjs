@@ -86,7 +86,8 @@ test('the setup prompt is one paragraph with every command written out', async (
     '`--source <folder>`',
     '`--build "<command>"`',
     '`npx afterimage save "First version"`',
-    '`npx afterimage dev`',
+    '`npm run dev`',
+    '`Add the Afterimage pill to your app`',
     '`node_modules/afterimage-cli/agents/skill/SKILL.md`',
     // What init and dev print in each case the prompt tells apart.
     '`Say where the prototype is`',
@@ -135,7 +136,7 @@ test('each CLI message the setup prompt quotes is still printed by the CLI', asy
   const source = (await Promise.all(files.map(name => fs.readFile(path.join(cliDir, name), 'utf8')))).join('\n');
   const prompt = (await read(docsFile)).split('## Setup prompt')[1].match(/```text\n([\s\S]*?)\n```/)[1];
   const skill = await read(skillFile);
-  for (const message of ['Say where the prototype is', 'no static build', 'Afterimage is running at']) {
+  for (const message of ['Say where the prototype is', 'no static build', 'Afterimage is running at', 'Add the Afterimage pill to your app']) {
     assert.ok(prompt.includes(`\`${message}\``), `the prompt quotes ${message}`);
     assert.ok(skill.includes(message), `the skill names ${message}`);
     assert.ok(source.includes(message), `src/cli still prints ${message}`);

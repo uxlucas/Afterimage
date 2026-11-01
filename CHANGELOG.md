@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- **The pill.** Afterimage now sits on the prototype itself. Save keeps the current state as the next version, and History opens every version over the page, in the same tab; Esc or the close button returns to the prototype. On a deployed site the same pill shows everyone the versions, without Save. It draws in a shadow root, so the app's CSS can't reach it, and it stays out of saved versions.
+- **`init` adds the pill and wires `npm run dev`.** A plain HTML page gets one script tag, and a Vite app's `index.html` one import. For Next.js, Astro and SvelteKit it prints the one import to add. The `dev` script now starts Afterimage beside the app (`vite` becomes `afterimage dev -- vite`), and a plain HTML folder gets a `dev` script that serves it. Run `npx afterimage init` again on a project set up with 0.1.
+- **`afterimage dev -- <your dev command>`** runs the app's own dev server with Afterimage beside it and stops when it stops. With no dev command, a plain HTML prototype is served at `/`. dev now starts before the first save, answers the pill's save on this machine only, and keeps its served copy outside the project, so a dev server watching the project can't stop it updating after a save on Windows.
+- **The viewer closes itself when it is opened in the pill's layer**: Esc with nothing else open returns to the prototype.
+- **The agent instructions** cover "add Afterimage so I can track my versions" from start to finish, and tell the agent to answer in a line instead of handing back commands.
+
 ## 0.1.1
 
 - **`init` keeps Next.js's long cache on the live app.** For a project that depends on `next`, `vercel.json` gets a header rule and a new `netlify.toml` a `[[headers]]` block that serve `/_next/static/` with `public, max-age=31536000, immutable`. The host settings Afterimage needs for Next.js turn off each host's own Next.js handling, which set that header, and real deploys of 0.1.0 showed those files served with `max-age=0`. Run `npx afterimage init` again to add it to a project set up with 0.1.0; for an existing `netlify.toml` it prints the lines to add.

@@ -65,7 +65,7 @@ async function checkCollision(sourceDir, excluded) {
 // With includeApp false (the dev server) only the afterimage/ folder is made. The old out stays in place until the
 // new one is complete, so a failure anywhere leaves the previous site untouched.
 // Returns warnings for the caller to print. fsOps lets tests make the swap fail; it is not part of the public signature.
-export async function assembleSite({ projectDir, config, viewerDir = packagedViewerDir, runtimeDir = packagedRuntimeDir, includeApp = true, buildStdio, fsOps = {} }) {
+export async function assembleSite({ projectDir, config, viewerDir = packagedViewerDir, runtimeDir = packagedRuntimeDir, includeApp = true, allowEmpty = false, buildStdio, fsOps = {} }) {
   const ops = { rename: fs.rename, rm: fs.rm, ...fsOps };
   const historyDir = path.resolve(projectDir, config.history);
   const sourceDir = path.resolve(projectDir, config.source);
@@ -73,7 +73,8 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
   const warnings = [];
 
   const manifest = await verifyHistory(historyDir);
-  if (!manifest?.versions.length) throw new Error('Save a first version with: afterimage save "Name"');
+  // Dev may start before the first save, so the overlay can offer it; a deploy needs something to show.
+  if (!manifest?.versions.length && !allowEmpty) throw new Error('Save a first version with: afterimage save "Name"');
   try {
     await fs.access(path.join(viewerDir, 'index.html'));
   } catch {
@@ -130,8 +131,8 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     }
     await fs.cp(viewerDir, served, { recursive: true });
     // Only what versions.json lists. The history folder also holds the save lock and stage folders.
-    await fs.copyFile(path.join(historyDir, 'versions.json'), path.join(served, 'versions.json'));
-    for (const { id } of manifest.versions) {
+    if (manifest) await fs.copyFile(path.join(historyDir, 'versions.json'), path.join(served, 'versions.json'));
+    for (const { id } of manifest?.versions ?? []) {
       await fs.cp(path.join(historyDir, 'versions', id), path.join(served, 'versions', id), { recursive: true });
     }
     // map.js is for node (history.js injects with it); frame.js and sw.js carry their own copies of what they need,
@@ -167,5 +168,5 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     await fs.rm(staging, keep).catch(() => {});
     throw error;
   }
-  return { outDir, versions: manifest.versions.length, warnings };
+  return { outDir, versions: manifest?.versions.length ?? 0, warnings };
 }

@@ -31,11 +31,7 @@ export async function run(args, { cwd, stdout, stderr, buildStdio, largeHistory 
   }
 
   const config = await readConfig(cwd);
-  if (config.build) await runBuild(config.build, cwd, { stdio: buildStdio });
-  const { version, unchanged, bytes, history } = await saveVersion(
-    { historyDir: path.resolve(cwd, config.history), sourceDir: path.resolve(cwd, config.source), exclude: await sourceExcludes(cwd, config) },
-    { name, notes: parsed.values.note ?? [] }
-  );
+  const { version, unchanged, bytes, history } = await saveProject({ projectDir: cwd, config, name, notes: parsed.values.note ?? [], buildStdio });
   if (unchanged) {
     stdout.write(`Nothing changed since ${version.id} "${version.name}". Nothing was saved.\n`);
     return 0;
@@ -49,7 +45,17 @@ export async function run(args, { cwd, stdout, stderr, buildStdio, largeHistory 
   return 0;
 }
 
-export const sizeDocs = 'https://github.com/uxlucas/Afterimage/blob/main/docs/limits.md#history-size';
+// Builds the prototype when it has a build, then saves it as the next version. Shared by this command and the overlay's
+// Save button, which reaches it through afterimage dev.
+export async function saveProject({ projectDir, config, name, notes = [], buildStdio }) {
+  if (config.build) await runBuild(config.build, projectDir, { stdio: buildStdio });
+  return saveVersion(
+    { historyDir: path.resolve(projectDir, config.history), sourceDir: path.resolve(projectDir, config.source), exclude: await sourceExcludes(projectDir, config) },
+    { name, notes }
+  );
+}
+
+export const sizeDocs ='https://github.com/uxlucas/Afterimage/blob/main/docs/limits.md#history-size';
 
 // Decimal units, as macOS Finder and npm count them.
 export function formatSize(bytes) {

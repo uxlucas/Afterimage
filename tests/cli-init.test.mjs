@@ -68,17 +68,18 @@ test('init in a plain folder creates package.json and ignores node_modules', asy
   assert.deepEqual({ source: config.source, build: config.build, type: config.type }, { source: '.', build: null, type: 'plain' });
   assert.deepEqual(await readJson(root, 'package.json'), {
     private: true,
-    scripts: { 'afterimage:save': 'afterimage save', 'afterimage:dev': 'afterimage dev', 'afterimage:build': 'afterimage build' }
+    scripts: { 'afterimage:save': 'afterimage save', 'afterimage:dev': 'afterimage dev', 'afterimage:build': 'afterimage build', dev: 'afterimage dev' }
   });
   assert.deepEqual(lines(await read(root, '.gitignore')).filter(Boolean), ['.afterimage/', 'afterimage/.afterimage-*', 'node_modules/']);
   assert.deepEqual(lines(await read(root, '.gitattributes')).filter(Boolean), ['afterimage/** -text']);
   assert.match(result.stdout, /^Created afterimage\.config\.json/m);
-  assert.match(result.stdout, /^Created package\.json \(added 3 scripts\)$/m);
+  assert.match(result.stdout, /^Created package\.json \(added 4 scripts\)$/m);
   assert.match(result.stdout, /^Created \.gitignore$/m);
   assert.match(result.stdout, /^Created \.gitattributes$/m);
   assert.match(result.stdout, /^Created vercel\.json$/m);
   assert.match(result.stdout, /^Created netlify\.toml$/m);
-  assert.ok(result.stdout.trimEnd().endsWith('Next: npx afterimage save "First version"'));
+  // One command from here: dev starts the prototype with the pill on it, and the pill saves.
+  assert.ok(result.stdout.trimEnd().endsWith('Next: npm run dev, then use the Afterimage pill on your prototype to save versions and see them all.'));
 });
 
 test('init reads the project before it creates package.json', async t => {
@@ -608,6 +609,7 @@ test('init twice is a no-op', async t => {
 test('init twice is a no-op in a framework project too', async t => {
   const root = await temp(t);
   await write(root, 'package.json', JSON.stringify({ devDependencies: { vite: '1.0.0' } }, null, 2) + '\n');
+  await write(root, 'index.html', '<div id="root"></div>');
   assert.equal((await run(root)).code, 0);
   const before = await snapshot(root);
   const second = await run(root);
@@ -986,4 +988,68 @@ test('--no-input asks nothing in a terminal and stops where there is no TTY', as
   assert.deepEqual(result.questions, []);
   assert.match(result.stderr, /afterimage init --source <folder>/);
   assert.deepEqual(Object.keys(await snapshot(root)), []);
+});
+
+// The pill on the prototype: init makes the project's own dev command start Afterimage too, and adds the overlay's
+// one line where it can do that safely. Bundled apps with a layout of their own get the line from the agent instead.
+const pillTag = '<script src="/afterimage/overlay.js" defer></script>';
+const pillImport = "<script type=\"module\">import 'afterimage-cli/overlay';</script>";
+
+test('a plain folder gets a dev script that serves it, and the pill on every page', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<!doctype html>\n<html><body>\n<h1>Hi</h1>\n</body></html>\n');
+  await fs.mkdir(path.join(root, 'pages'));
+  await write(root, 'pages/about.html', '<h1>About</h1>');
+  await fs.mkdir(path.join(root, 'node_modules/thing'), { recursive: true });
+  await write(root, 'node_modules/thing/index.html', '<h1>Not mine</h1>');
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+
+  assert.equal((await readJson(root, 'package.json')).scripts.dev, 'afterimage dev');
+  assert.equal(await read(root, 'index.html'), `<!doctype html>\n<html><body>\n<h1>Hi</h1>\n${pillTag}\n</body></html>\n`);
+  assert.equal(await read(root, 'pages/about.html'), `<h1>About</h1>\n${pillTag}\n`);
+  assert.equal(await read(root, 'node_modules/thing/index.html'), '<h1>Not mine</h1>');
+  assert.match(result.stdout, /^Added the Afterimage pill to 2 pages \(index\.html, pages\/about\.html\)$/m);
+
+  const before = await snapshot(root);
+  const again = await run(root);
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('a Vite app keeps its own dev command, with Afterimage started beside it, and gets the pill in index.html', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ scripts: { dev: 'vite --port 3000', build: 'vite build' }, devDependencies: { vite: '1.0.0' } }, null, 2) + '\n');
+  await write(root, 'index.html', '<div id="root"></div>\n<script type="module" src="/src/main.jsx"></script>\n</body>\n');
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+
+  const scripts = (await readJson(root, 'package.json')).scripts;
+  assert.equal(scripts.dev, 'afterimage dev -- vite --port 3000');
+  assert.equal(scripts.build, 'vite build');
+  assert.match(result.stdout, /^Updated package\.json \(added 3 scripts; dev now starts Afterimage too\)$/m);
+  assert.equal(await read(root, 'index.html'), `<div id="root"></div>\n<script type="module" src="/src/main.jsx"></script>\n${pillImport}\n</body>\n`);
+  assert.match(result.stdout, /^Added the Afterimage pill to index\.html$/m);
+
+  const before = await snapshot(root);
+  assert.equal((await run(root)).code, 0);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('a Next.js app gets the dev wrap, and a note on where its pill goes', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ scripts: { dev: 'next dev', build: 'next build' }, dependencies: { next: '16.0.0' } }));
+  await write(root, 'next.config.mjs', "export default { output: 'export' };\n");
+  const result = await run(root, ['--no-input']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal((await readJson(root, 'package.json')).scripts.dev, 'afterimage dev -- next dev');
+  assert.match(result.stdout, /import 'afterimage-cli\/overlay'/);
+  assert.match(result.stdout, /'use client'/);
+
+  // Once the app imports it, init stops asking.
+  await fs.mkdir(path.join(root, 'app'));
+  await write(root, 'app/afterimage.tsx', "'use client';\nimport 'afterimage-cli/overlay';\nexport default function Afterimage() { return null; }\n");
+  const again = await run(root, ['--no-input']);
+  assert.doesNotMatch(again.stdout, /Add the Afterimage pill/);
+  assert.match(again.stdout, /already set up/);
 });

@@ -35,7 +35,10 @@ const skillHint = [
   ...Object.entries(agents).map(([name, agent]) => `  npx afterimage init --agent ${name}   copies the ${agent.what} to ${agent.to}${agent.what === 'skill' ? '/' : ''}`)
 ].join('\n');
 
-const nextStep = 'Next: npx afterimage save "First version"';
+// The dev script starts Afterimage beside the app when init could set it; otherwise the app's own command goes after --.
+const nextStep = devReady => (devReady
+  ? 'Next: npm run dev, then use the Afterimage pill on your prototype to save versions and see them all.'
+  : 'Next: start your dev server through Afterimage with npx afterimage dev -- <your dev command>, then use the pill on your prototype to save versions and see them all.');
 
 async function isFolder(file) {
   try {
@@ -146,26 +149,132 @@ async function planConfig(cwd, flags, ctx) {
   };
 }
 
-async function planPackage(cwd) {
+// Read and checked before anything else, so a bad package.json stops init before any question.
+async function readPackage(cwd) {
   const file = path.join(cwd, 'package.json');
   const { bom, body: before } = await readJsonText(file);
   const manifest = before === null ? { private: true, scripts: {} } : parseJson(before, 'package.json');
   if (manifest.scripts !== undefined && (!manifest.scripts || typeof manifest.scripts !== 'object' || Array.isArray(manifest.scripts))) {
     throw new Error('package.json "scripts" must be an object.\nFix it, then run "afterimage init" again.');
   }
+  return { file, bom, before, manifest };
+}
+
+// The pill on the prototype needs afterimage dev running beside the app. So the project's own dev script starts it:
+// "vite" becomes "afterimage dev -- vite", which runs both and stops both. A plain folder with no dev script gets
+// "afterimage dev", which serves the folder itself. Run again, it changes nothing.
+const devWrap = 'afterimage dev';
+function devScript(existing, config) {
+  if (typeof existing.dev === 'string') return existing.dev.trim().startsWith(devWrap) ? null : `${devWrap} -- ${existing.dev}`;
+  return config.build ? null : devWrap;
+}
+
+function planPackage({ file, bom, before, manifest }, config) {
   const existing = manifest.scripts ?? {};
   const added = Object.keys(scripts).filter(name => !Object.hasOwn(existing, name));
   const notes = [];
   if (Object.hasOwn(existing, 'afterimage:build') && existing['afterimage:build'] !== scripts['afterimage:build']) {
     notes.push(`package.json already has "afterimage:build": "${existing['afterimage:build']}". The host config runs that script, so it should be "${scripts['afterimage:build']}".`);
   }
-  if (!added.length) return { change: null, notes, apply: null };
-  manifest.scripts = { ...existing, ...Object.fromEntries(added.map(name => [name, scripts[name]])) };
-  const what = `added ${plural(added.length, 'script')}`;
+  const dev = devScript(existing, config);
+  if (!added.length && !dev) return { change: null, notes, apply: null };
+  const wraps = dev && Object.hasOwn(existing, 'dev');
+  manifest.scripts = { ...existing, ...Object.fromEntries(added.map(name => [name, scripts[name]])), ...(dev ? { dev } : {}) };
+  const count = added.length + (dev && !wraps ? 1 : 0);
+  const what = [count ? `added ${plural(count, 'script')}` : null, wraps ? 'dev now starts Afterimage too' : null].filter(Boolean).join('; ');
   return {
     change: `${before === null ? 'Created' : 'Updated'} package.json (${what})`,
     notes,
     apply: writer(file, bom + writePackageText(before, manifest))
+  };
+}
+
+// The overlay's one line. A plain page loads it from the history's own folder, which afterimage dev and the deployed
+// site both serve; a Vite page imports it from the package, since Vite's dev server serves no /afterimage/.
+const pillTag = '<script src="/afterimage/overlay.js" defer></script>';
+const pillImport = "<script type=\"module\">import 'afterimage-cli/overlay';</script>";
+const pillNotes = {
+  'next-static': "Add the Afterimage pill to your app: create app/afterimage.tsx with\n  'use client';\n  import 'afterimage-cli/overlay';\n  export default function Afterimage() { return null; }\nand put <Afterimage /> inside <body> in app/layout.tsx.",
+  astro: "Add the Afterimage pill to your app: put <script>import 'afterimage-cli/overlay';</script> in the layout every page uses.",
+  'sveltekit-static': "Add the Afterimage pill to your app: put import 'afterimage-cli/overlay'; in the <script> of src/routes/+layout.svelte.",
+  unknown: "Add the Afterimage pill to your app: import 'afterimage-cli/overlay' once in the code every page loads."
+};
+
+// Before the last </body>, or at the end of the file when it has none, on a line of its own. When </body> starts its
+// line, the new line takes the indent of the line above it, so it sits with the page's other scripts.
+function withLine(text, line) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const at = text.search(/<\/body>(?![\s\S]*<\/body>)/i);
+  if (at === -1) return `${text}${text === '' || text.endsWith('\n') ? '' : eol}${line}${eol}`;
+  const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+  if (!/^[ \t]*$/.test(text.slice(lineStart, at))) return `${text.slice(0, at)}${eol}${line}${eol}${text.slice(at)}`;
+  const above = text.slice(0, lineStart).replace(/\r?\n$/, '').split(/\r?\n/).pop();
+  return `${text.slice(0, lineStart)}${above.match(/^[ \t]*/)[0]}${line}${eol}${text.slice(lineStart)}`;
+}
+
+// Every file under `dir` whose name passes `want`, never going into hidden folders, installed packages or `skip`
+// (absolute folders), which a real project's node_modules makes worth not reading at all.
+async function walk(dir, want, skip) {
+  const found = [];
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    if (entry.isDirectory()) {
+      if (!skip.includes(full)) found.push(...await walk(full, want, skip));
+    } else if (entry.isFile() && want(entry.name)) {
+      found.push(full);
+    }
+  }
+  return found;
+}
+
+// Every .html page in the prototype's folder, minus the history and Afterimage's own output.
+async function plainPages(cwd, config) {
+  const skip = [config.history, config.out].map(folder => path.resolve(cwd, folder));
+  const pages = await walk(path.resolve(cwd, config.source), name => /\.html?$/i.test(name), skip);
+  return pages.map(full => ({ full, name: path.relative(cwd, full).replace(/\\/g, '/') })).sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+// Whether the app's own code already loads the overlay, so init stops asking once the line is in. Only source files
+// are read: not installed packages, hidden folders, the history, or what a build wrote.
+const codeFile = /\.(m?[jt]sx?|svelte|astro|vue|html?)$/i;
+async function loadsPill(cwd, config) {
+  const skip = [config.history, config.out, config.source].filter(folder => folder !== '.').map(folder => path.resolve(cwd, folder));
+  for (const full of await walk(cwd, name => codeFile.test(name), skip)) {
+    const text = await readText(full);
+    if (text.includes('afterimage-cli/overlay') || text.includes('/afterimage/overlay.js')) return true;
+  }
+  return false;
+}
+
+async function planPill(cwd, config) {
+  let pages = [];
+  let line = pillTag;
+  const noteFor = async type => ({ change: null, notes: await loadsPill(cwd, config) ? [] : [pillNotes[type] ?? pillNotes.unknown], apply: null });
+  if (config.type === 'plain') {
+    pages = await plainPages(cwd, config);
+  } else if (config.type === 'vite') {
+    const index = path.join(cwd, 'index.html');
+    if (await readText(index) === null) return noteFor('unknown');
+    pages = [{ full: index, name: 'index.html' }];
+    line = pillImport;
+  } else {
+    return noteFor(config.type);
+  }
+  const writes = [];
+  for (const page of pages) {
+    const text = await readText(page.full);
+    if (text.includes('/afterimage/overlay.js') || text.includes('afterimage-cli/overlay')) continue;
+    writes.push({ ...page, text: withLine(text, line) });
+  }
+  if (!writes.length) return { change: null, notes: [], apply: null };
+  const names = writes.map(page => page.name);
+  return {
+    change: names.length === 1 ? `Added the Afterimage pill to ${names[0]}` : `Added the Afterimage pill to ${names.length} pages (${names.join(', ')})`,
+    notes: [],
+    apply: async () => {
+      for (const page of writes) await fs.writeFile(page.full, page.text);
+    }
   };
 }
 
@@ -274,11 +383,12 @@ export async function run(args, ctx) {
   // and detection (which reads package.json) still sees the project as it was.
   let plans;
   try {
-    const packagePlan = await planPackage(cwd);
+    const packageFile = await readPackage(cwd);
     const configPlan = await planConfig(cwd, flags, prompt);
     plans = [
       configPlan,
-      packagePlan,
+      planPackage(packageFile, configPlan.config),
+      await planPill(cwd, configPlan.config),
       await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
       // The save's lock and stage folders too, which a killed save can leave in the history folder.
       await planLines(cwd, '.gitignore', ['.afterimage/', `${configPlan.config.history}/.afterimage-*`, 'node_modules/'], hasIgnore),
@@ -302,6 +412,7 @@ export async function run(args, ctx) {
   if (notes.length) stdout.write(`${changes.length ? '\n' : ''}${notes.join('\n\n')}\n`);
   // With --agent the copy is in place, and a fresh one needs loading; without it, say how to add it.
   const agentLine = agent ? plans.at(-1).change && agents[agent].loads : skillHint;
-  stdout.write(`\n${agentLine ? `${agentLine}\n` : ''}${nextStep}\n`);
+  const dev = (await readPackage(cwd)).manifest.scripts?.dev;
+  stdout.write(`\n${agentLine ? `${agentLine}\n` : ''}${nextStep(typeof dev === 'string' && dev.trim().startsWith(devWrap))}\n`);
   return 0;
 }

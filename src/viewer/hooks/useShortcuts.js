@@ -11,7 +11,7 @@ export function useShortcuts(env) {
   const handle = useCallback(token => {
     const { state, dispatch, versions, review, phone, helpOpen, setHelpOpen, togglePanel, closePanel, fieldRef, handoffRef, noteDockFocus, focusFieldWhenBack } = latest.current;
     const focusInPanel = Boolean(document.activeElement?.closest?.('.panel'));
-    const result = resolveShortcut(token, { state, versions, entries: review.entries, phone, helpOpen, hasField: Boolean(fieldRef.current), focusInPanel });
+    const result = resolveShortcut(token, { state, versions, entries: review.entries, phone, helpOpen, hasField: Boolean(fieldRef.current), focusInPanel, framed: window.parent !== window });
     if (!result.consumed) return false;
 
     switch (result.effect) {
@@ -26,6 +26,9 @@ export function useShortcuts(env) {
         fieldRef.current.select();
         break;
       case 'focusFieldWhenBack': focusFieldWhenBack.current = true; break;
+      // The pill's layer (runtime/overlay.js) listens for this and closes. The message says nothing private, so any
+      // parent may hear it.
+      case 'leaveViewer': window.parent.postMessage({ type: 'afterimage:close' }, '*'); break;
       default:
     }
     // Focus on the pill follows it into the chip and back.

@@ -77,12 +77,109 @@ async function until(condition, what) {
 const get = (dev, pathname, init) => fetch(new URL(pathname, dev.url), init);
 const exists = target => fs.access(target).then(() => true, () => false);
 
-test('dev with no versions explains how to save one', async t => {
+// The overlay on the prototype talks to dev through /afterimage/api/, from the app's own dev server on another port.
+const app = 'http://localhost:5173';
+const session = async dev => (await get(dev, '/afterimage/api/session', { headers: { Origin: app } })).json();
+const saveFrom = (dev, body, origin = app) => get(dev, '/afterimage/api/save', {
+  method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+});
+
+test('dev starts with no versions, so the overlay can offer the first save', async t => {
   const root = await project(t, { saved: false });
-  const result = await run(root, ['dev'], await fixtures(t));
-  assert.equal(result.code, 1);
-  assert.equal(result.stderr, 'Save a first version with: afterimage save "Name"\n');
-  assert.equal(result.stdout, '');
+  const { dev } = await start(t, root, await fixtures(t));
+  assert.deepEqual(await session(dev), { afterimage: 1, versions: 0, latest: null, canSave: true });
+  assert.equal((await get(dev, '/afterimage/versions.json')).status, 404);
+});
+
+test('the overlay saves through dev, and the save shows up in the history', async t => {
+  const root = await project(t, { saved: false });
+  const { dev } = await start(t, root, await fixtures(t));
+
+  const first = await saveFrom(dev, { name: 'First', note: 'The first one.' });
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('access-control-allow-origin'), app);
+  assert.deepEqual(await first.json(), { saved: true, id: 'v1', name: 'First' });
+  await until(async () => (await session(dev)).versions === 1, 'the history to update');
+  assert.deepEqual((await session(dev)).latest, { id: 'v1', name: 'First' });
+  const manifest = await (await get(dev, '/afterimage/versions.json')).json();
+  assert.deepEqual(manifest.versions[0].notes, ['The first one.']);
+
+  // The same prototype again saves nothing, and says which version it matches.
+  assert.deepEqual(await (await saveFrom(dev, { name: 'Again' })).json(), { saved: false, id: 'v1', name: 'First' });
+
+  // With no name, a version is named by its number.
+  await fs.writeFile(path.join(root, 'dist/index.html'), '<h1>Two</h1>');
+  assert.deepEqual(await (await saveFrom(dev, {})).json(), { saved: true, id: 'v2', name: 'Version 2' });
+});
+
+test('a failed save says why, and saves nothing', async t => {
+  const root = await project(t, { saved: false });
+  const config = await readConfig(root);
+  await writeConfig(root, { ...config, build: 'node -e "process.exit(4)"' });
+  const { dev } = await start(t, root, await fixtures(t));
+  const response = await saveFrom(dev, { name: 'Broken' });
+  assert.equal(response.status, 500);
+  assert.match((await response.json()).error, /The build failed \(exit code 4\)\. Nothing was saved\./);
+  assert.equal((await session(dev)).versions, 0);
+});
+
+test('only pages on this machine can use the api', async t => {
+  const root = await project(t, { saved: false });
+  const { dev } = await start(t, root, await fixtures(t));
+
+  for (const origin of ['https://example.com', 'http://localhost.example.com', 'null']) {
+    const refused = await saveFrom(dev, { name: 'Sneaky' }, origin);
+    assert.equal(refused.status, 403, origin);
+    assert.equal(refused.headers.get('access-control-allow-origin'), null, origin);
+  }
+  assert.equal((await session(dev)).versions, 0);
+
+  for (const origin of [app, 'http://127.0.0.1:3000', 'http://[::1]:8080', 'http://site.localhost:4000']) {
+    const preflight = await get(dev, '/afterimage/api/save', {
+      method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' }
+    });
+    assert.equal(preflight.status, 204, origin);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+    assert.match(preflight.headers.get('access-control-allow-methods'), /POST/);
+    assert.match(preflight.headers.get('access-control-allow-headers'), /content-type/i);
+  }
+  assert.equal((await get(dev, '/afterimage/api/save')).status, 405);
+  assert.equal((await get(dev, '/afterimage/api/nope', { headers: { Origin: app } })).status, 404);
+});
+
+// Stamped, so a script tag dev served knows dev answers on its own origin. A built site's copy has no stamp, and its
+// pill never asks for a helper there.
+test('dev serves the overlay with the runtime, stamped as served by dev', async t => {
+  const dirs = await fixtures(t);
+  await fs.writeFile(path.join(dirs.runtimeDir, 'overlay.js'), 'overlay();');
+  const { dev } = await start(t, await project(t, { saved: false }), dirs);
+  const overlay = await get(dev, '/afterimage/overlay.js');
+  assert.equal(overlay.status, 200);
+  assert.match(overlay.headers.get('content-type'), /javascript/);
+  assert.equal(await overlay.text(), 'window.__afterimageDev = true;\noverlay();');
+});
+
+test('with app, dev serves a plain prototype at the root beside the history', async t => {
+  const root = await project(t);
+  const { dev } = await start(t, root, await fixtures(t), { app: true });
+  const page = await get(dev, '/');
+  assert.equal(page.status, 200);
+  assert.equal(await page.text(), '<h1>One</h1>');
+  // Live: an edit shows on the next load, without a save.
+  await fs.writeFile(path.join(root, 'dist/index.html'), '<h1>Edited</h1>');
+  assert.equal(await (await get(dev, '/index.html')).text(), '<h1>Edited</h1>');
+  assert.equal((await get(dev, '/afterimage/')).status, 200);
+  assert.deepEqual(await session(dev), { afterimage: 1, versions: 1, latest: { id: 'v1', name: 'First' }, canSave: true });
+});
+
+test('dev -- <command> runs the app\'s own dev server, and stops with its exit code', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t);
+  await fs.writeFile(path.join(root, 'app-server.mjs'), "import fs from 'node:fs'; fs.writeFileSync('ran.txt', process.argv.slice(2).join(' ')); process.exit(3);");
+  const result = await run(root, ['dev', '--', 'node', 'app-server.mjs', '--port', '5173'], dirs);
+  assert.equal(result.code, 3);
+  assert.equal(await fs.readFile(path.join(root, 'ran.txt'), 'utf8'), '--port 5173');
+  assert.match(result.stdout, /^Afterimage is running at http:\/\/localhost:\d+\/afterimage\/\n/);
 });
 
 test('dev without a config says to run init', async t => {
@@ -122,10 +219,11 @@ test('dev serves the history at /afterimage/ from its own folder and never touch
   assert.equal(toViewer.headers.get('location'), '/afterimage/');
   assert.equal((await get(dev, '/', { redirect: 'manual' })).headers.get('location'), '/afterimage/');
 
-  // The app is not part of dev, and build's folder is left alone so the two can run together.
+  // The app is not part of dev, and build's folder is left alone so the two can run together. The served copy lives
+  // outside the project: a dev server watching the project (Vite does) holds its folders open on Windows, and the
+  // copy could then never be replaced after a save.
   assert.equal((await get(dev, '/index.html')).status, 404);
-  assert.equal(await exists(path.join(root, '.afterimage/dev/afterimage/index.html')), true);
-  assert.equal(await exists(path.join(root, '.afterimage/site')), false);
+  assert.equal(await exists(path.join(root, '.afterimage')), false);
 });
 
 // A free port whose neighbour is free too, held on `host`. Returns null when this machine cannot listen on that host.
@@ -278,12 +376,15 @@ test('dev prints where it runs, announces updates, and stops cleanly', async t =
   const running = main(['dev', '--port', '4321'], {
     cwd: root, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, signal: controller.signal, ...dirs
   });
+  // A failed assertion must still stop dev, or the test run never ends.
+  t.after(() => controller.abort());
   await until(() => out.length >= 2, 'dev to start');
   const url = /http:\/\/localhost:(\d+)\/afterimage\//.exec(out[0]);
   assert.ok(url, out[0]);
   assert.ok(Number(url[1]) >= 4321);
   assert.equal(out[0], `Afterimage is running at ${url[0]}\n`);
-  assert.equal(out[1], 'Your app keeps running on its own dev server; this only serves the history.\n');
+  // This prototype is plain HTML with no build, so dev serves it too.
+  assert.equal(out[1], `Your prototype is at http://localhost:${url[1]}/\n`);
 
   await fs.writeFile(path.join(root, 'dist/index.html'), '<h1>Two</h1>');
   assert.equal((await run(root, ['save', 'Second'])).code, 0);

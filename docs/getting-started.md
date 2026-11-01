@@ -45,7 +45,8 @@ A project that needs a server to render its pages has nothing static to save. Fo
 Then it writes these files and lists each one it created or changed:
 
 - `afterimage.config.json`: where the prototype is and how it is built.
-- `package.json`: the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build`.
+- `package.json`: the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build`, and a `dev` script that starts Afterimage beside your app.
+- Your pages: the pill, one line in each plain HTML page or in a Vite app's `index.html`. For Next.js, Astro and SvelteKit init prints the one import to add.
 - `.gitattributes`: `afterimage/** -text`, so git never changes a saved version's line endings.
 - `.gitignore`: `.afterimage/` (the built site), `afterimage/.afterimage-*` (a save's lock and work folders) and `node_modules/`.
 - `vercel.json` and `netlify.toml`: the host config. [deploying.md](deploying.md) explains each setting.
@@ -66,15 +67,15 @@ npx afterimage save "Remember me" --note "Keeps people signed in for 30 days." -
 
 If nothing changed since the last version, nothing is saved and it says so. A saved version is never edited afterwards: each one is fingerprinted, and every later save, dev and build checks the fingerprints first.
 
-## 4. Open the history
+## 4. Run the prototype with the pill
 
 ```bash
-npx afterimage dev
+npm run dev
 ```
 
-It prints `Afterimage is running at http://localhost:4321/afterimage/`. The port moves to the next free one when 4321 is busy, so open the address it prints. It keeps running until you stop it with Ctrl-C, and picks up each new save on its own.
+Your app starts as it always does, with Afterimage beside it, and the pill sits at the bottom right of the page. Save keeps the current state as the next version, the same as `afterimage save`. History opens every version over the page, and Esc closes it. A plain HTML folder is served by Afterimage itself, at the address after `Your prototype is at`.
 
-`dev` serves the saved versions only. Keep running your app the way you do now, with its own dev server or by opening the folder in a browser.
+It keeps running until you stop it with Ctrl-C. It also prints `Afterimage is running at http://localhost:4321/afterimage/`, where the history opens on its own page. The port moves to the next free one when 4321 is busy. If your `dev` script doesn't start with `afterimage dev`, run your own dev command through it instead: `npx afterimage dev -- next dev`.
 
 ## 5. Use the viewer
 

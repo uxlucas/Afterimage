@@ -1,16 +1,16 @@
 # Agents
 
-Afterimage works from a coding agent such as Claude Code or Cursor. Paste the setup prompt once, and from then on you can ask the agent to save, compare and deploy versions in plain words.
+Afterimage works from a coding agent such as Claude Code or Cursor. Paste the setup prompt once. The agent installs Afterimage, puts the pill on your prototype and starts it. From then on you save and look back from the pill itself, and you can still ask the agent to save, compare and deploy versions in plain words.
 
 ## Setup prompt
 
 Open your agent in your prototype's project and paste this:
 
 ```text
-Set up Afterimage, a version history for this prototype, in the project root. If the project has no package.json, run `npm init -y` first. Install Afterimage with `npm install --save-dev afterimage-cli`. Then run `npx afterimage init --agent claude --no-input` if you are Claude Code, or `npx afterimage init --agent cursor --no-input` if you are Cursor; any other agent runs `npx afterimage init --no-input` and adds the body of `node_modules/afterimage-cli/agents/skill/SKILL.md`, everything after its frontmatter, to this project's AGENTS.md. If init's message contains `no static build` (Next.js without `output: 'export'`, Astro with an adapter but without `output: 'static'`, or SvelteKit without `@sveltejs/adapter-static`), tell me what has to change and stop, without passing `--source`; once I tell you I've made the change, run this setup again from the init step. Otherwise, if init stops with `Say where the prototype is`, ask me which folder holds the prototype (never guess), then run the same init command again with `--source <folder>` added, plus `--build "<command>"` if a build command writes that folder. If init or any later command stops with a different error, show me the message and stop. Show me any notes init prints after the list of files it changed. Read `node_modules/afterimage-cli/agents/skill/SKILL.md` now and follow it for the rest of this session. Unless `afterimage/versions.json` already lists a version, save the current state with `npx afterimage save "First version"`. Then start `npx afterimage dev` as a background process, because it keeps running until it is stopped, wait for the line that starts with `Afterimage is running at`, and give me the exact URL on that line; the port is not always 4321. Last, tell me that a new session, or `/reload-skills` in Claude Code, loads the Afterimage skill from then on.
+Add Afterimage so I can track this prototype's versions. Work in the project root. If the project has no package.json, run `npm init -y` first. Install Afterimage with `npm install --save-dev afterimage-cli`. Then run `npx afterimage init --agent claude --no-input` if you are Claude Code, or `npx afterimage init --agent cursor --no-input` if you are Cursor; any other agent runs `npx afterimage init --no-input` and adds the body of `node_modules/afterimage-cli/agents/skill/SKILL.md`, everything after its frontmatter, to this project's AGENTS.md. If init's message contains `no static build` (Next.js without `output: 'export'`, Astro with an adapter but without `output: 'static'`, or SvelteKit without `@sveltejs/adapter-static`), tell me what has to change and stop, without passing `--source`; once I tell you I've made the change, run this setup again from the init step. Otherwise, if init stops with `Say where the prototype is`, ask me which folder holds the prototype (never guess), then run the same init command again with `--source <folder>` added, plus `--build "<command>"` if a build command writes that folder. If init or any later command stops with a different error, show me the message and stop. If init prints a note that starts with `Add the Afterimage pill to your app`, make that change yourself; show me any other notes it prints after the list of files it changed. Read `node_modules/afterimage-cli/agents/skill/SKILL.md` now and follow it for the rest of this session. Unless `afterimage/versions.json` already lists a version, save the current state with `npx afterimage save "First version"`. Then start `npm run dev` as a background process (stop any dev server you started for this project earlier, since this one replaces it), because it keeps running until it is stopped, and wait for the line that starts with `Afterimage is running at`. Last, in two lines at most, give me the address my prototype is running at and tell me the pill at its bottom right saves versions and shows them all; never give me a command to run.
 ```
 
-When it finishes, the first version is saved and the viewer is open at the URL the agent gives you.
+When it finishes, the first version is saved and your prototype is running with the pill on it. Save keeps the current state as the next version. History opens every version over the page, with what changed between any two, and Esc closes it. Once you deploy, the same pill on the live site shows everyone the versions, without Save.
 
 ## Example prompts
 
@@ -26,7 +26,7 @@ The agent runs:
 npx afterimage save "Remember me" --note "Keeps people signed in for 30 days."
 ```
 
-and tells you the version it saved, such as `v4`. If nothing changed since the last version, nothing is saved and the agent says so.
+and tells you the version it saved, such as `v4`. If nothing changed since the last version, nothing is saved and the agent says so. The pill's Save button does the same without asking anyone.
 
 ### Compare two versions
 
@@ -34,7 +34,7 @@ and tells you the version it saved, such as `v4`. If nothing changed since the l
 What changed since v2?
 ```
 
-The agent makes sure `npx afterimage dev` is running and gives you a link to the viewer comparing the latest version with v2. With v4 as the latest, on the default port, that is:
+The agent makes sure `npm run dev` is running and gives you a link to the viewer comparing the latest version with v2. With v4 as the latest, on the default port, that is:
 
 ```text
 http://localhost:4321/afterimage/?version=v4&mode=compare&base=v2
@@ -72,7 +72,7 @@ Then install Afterimage as a dev dependency:
 npm install --save-dev afterimage-cli
 ```
 
-**2. Set up the project.** This writes `afterimage.config.json`, three scripts in `package.json`, lines in `.gitattributes` and `.gitignore`, `vercel.json` and `netlify.toml`:
+**2. Set up the project.** This writes `afterimage.config.json`, Afterimage's scripts in `package.json` and a `dev` script that starts Afterimage beside your app, the pill's line in your pages, lines in `.gitattributes` and `.gitignore`, `vercel.json` and `netlify.toml`. For Next.js, Astro and SvelteKit it prints the one line to add the pill yourself:
 
 ```bash
 npx afterimage init
@@ -90,11 +90,13 @@ npx afterimage init --source dist --build "npm run build"
 npx afterimage save "First version"
 ```
 
-**4. Open the history.** dev keeps running until you stop it with Ctrl-C. Open the URL it prints. The port starts at 4321 and moves when that one is busy.
+**4. Run the prototype.** Your app starts with Afterimage beside it, and the pill sits at the bottom right of the page. It keeps running until you stop it with Ctrl-C. A plain HTML folder is served at the address it prints after `Your prototype is at`.
 
 ```bash
-npx afterimage dev
+npm run dev
 ```
+
+If your `dev` script doesn't start with `afterimage dev`, run your own dev command through it: `npx afterimage dev -- next dev`.
 
 **5. Add the skill to your agent.** The package ships the commands and rules for agents, so a request like "save a version called Remember me" works. For Claude Code, this copies the skill to `.claude/skills/afterimage/`:
 

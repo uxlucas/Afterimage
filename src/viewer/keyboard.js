@@ -60,11 +60,12 @@ const release = { type: 'setPeek', peek: false };
 
 // What a shortcut does, decided from what the viewer shows. Pure: the caller carries it out.
 //   token: what shortcutFor returned (an Action, or 'focusVersion' | 'help' | 'escape')
-//   env: { state, versions, entries, phone, helpOpen, hasField, focusInPanel }  (entries: the review's, unfiltered)
+//   env: { state, versions, entries, phone, helpOpen, hasField, focusInPanel, framed }  (entries: the review's, unfiltered)
 //   -> { consumed, dispatch: Action[], effect: string | null }
-// Effects: closeHelp, toggleHelp, closePanel, leaveCompare, togglePanel, openPanelByKeyboard, focusField, focusFieldWhenBack.
+// Effects: closeHelp, toggleHelp, closePanel, leaveCompare, leaveViewer, togglePanel, openPanelByKeyboard, focusField,
+// focusFieldWhenBack.
 // consumed false means the key did nothing, so it isn't swallowed.
-export function resolveShortcut(token, { state, versions, entries, phone, helpOpen, hasField, focusInPanel = false }) {
+export function resolveShortcut(token, { state, versions, entries, phone, helpOpen, hasField, focusInPanel = false, framed = false }) {
   const act = (effect = null, ...dispatch) => ({ consumed: true, dispatch, effect });
   const none = { consumed: false, dispatch: [], effect: null };
 
@@ -73,11 +74,13 @@ export function resolveShortcut(token, { state, versions, entries, phone, helpOp
 
   if (token === 'help') return act('toggleHelp');
 
-  // Esc closes whatever is on top: the sheet, then the panel, then Compare.
+  // Esc closes whatever is on top: the sheet, then the panel, then Compare. Opened from the pill on a prototype, the
+  // viewer itself is a layer in a frame, and it goes last.
   if (token === 'escape') {
     if (helpOpen) return act('closeHelp');
     if (state.panelOpen) return act('closePanel');
     if (state.mode === 'compare') return act('leaveCompare', { type: 'setMode', mode: 'explore' });
+    if (framed) return act('leaveViewer');
     return none;
   }
 

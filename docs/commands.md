@@ -5,7 +5,7 @@ Run every command from the project root, where `afterimage.config.json` is. With
 ```text
 afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]
 afterimage save "Name" [--note "..."]
-afterimage dev [--port N]
+afterimage dev [--port N] [-- <your dev command>]
 afterimage build
 ```
 
@@ -17,7 +17,7 @@ afterimage build
 npx afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]
 ```
 
-Sets up Afterimage in the project: config, scripts, git rules and host config.
+Sets up Afterimage in the project: config, scripts, the pill, git rules and host config.
 
 | Flag | What it does |
 | --- | --- |
@@ -34,7 +34,8 @@ It writes:
 | File | What init does to it |
 | --- | --- |
 | `afterimage.config.json` | Creates it. With `--source` or `--build` on a later run, updates those two fields. |
-| `package.json` | Adds the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build` where they are missing, keeping the file's own indent and line endings. Creates a private `package.json` when there is none. |
+| `package.json` | Adds the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build` where they are missing, keeping the file's own indent and line endings. Makes the `dev` script start Afterimage beside your app: `vite` becomes `afterimage dev -- vite`, and a plain HTML folder with no `dev` script gets `afterimage dev`. Creates a private `package.json` when there is none. |
+| Your pages | Adds the pill. A plain HTML page gets `<script src="/afterimage/overlay.js" defer></script>` before `</body>`, and a Vite app's `index.html` gets `<script type="module">import 'afterimage-cli/overlay';</script>`. For Next.js, Astro and SvelteKit it prints the one import to add, in a note that starts with `Add the Afterimage pill to your app`. A page that already loads the pill is left alone. |
 | `.gitattributes` | Adds `afterimage/** -text`. |
 | `.gitignore` | Adds `.afterimage/`, `afterimage/.afterimage-*` (a save's lock and work folders) and `node_modules/`. |
 | `vercel.json` | Creates it, or adds what is missing. Asks before it changes a value that is already set. See [deploying.md](deploying.md#vercel). |
@@ -79,21 +80,23 @@ Each saved HTML page gets one tag added at the start of its `<head>`, `<script s
 ## dev
 
 ```bash
-npx afterimage dev [--port N]
+npx afterimage dev [--port N] [-- <your dev command>]
 ```
 
-Serves the saved history at `/afterimage/` while your app runs on its own dev server.
+Runs your app's dev server with Afterimage beside it, so the pill on the prototype can save versions and show them. `npm run dev` does this once init has set the `dev` script.
 
 | Flag | What it does |
 | --- | --- |
-| `--port N` | The port to start from, 1 to 65535. The default is 4321. |
+| `--port N` | The port Afterimage starts from, 1 to 65535. The default is 4321. |
+| `-- <your dev command>` | Your app's own dev command, such as `vite` or `next dev`. Afterimage runs it, and stops when it stops. |
 
-- It prints `Afterimage is running at http://localhost:4321/afterimage/`. When the port is taken it tries the next one, up to 20 ports, and prints the one it got.
+- It prints `Afterimage is running at http://localhost:4321/afterimage/`, the history's own address. When the port is taken it tries the next one, up to 20 ports, and prints the one it got. The pill finds it on its own.
+- With no dev command and no build, as for a plain HTML folder, it serves the prototype too and prints `Your prototype is at http://localhost:4321/`.
+- The pill's Save runs the same save as `afterimage save`, with your build first. Only pages served from this machine can ask it to save.
 - It only listens on this machine (127.0.0.1).
-- It serves the viewer and the saved versions, not your app, and doesn't run your build.
 - When a save finishes it rebuilds what it serves and prints `Updated: N versions.` If that fails it prints `Could not update the history` and keeps serving the last good copy.
-- With no saved versions it stops with `Save a first version with: afterimage save "Name"`.
-- It runs until you stop it with Ctrl-C.
+- It starts with no saved versions too, and the pill then offers to save the first one.
+- It runs until you stop it with Ctrl-C, or until your dev command ends.
 
 ## build
 
