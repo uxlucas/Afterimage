@@ -49,9 +49,10 @@ const isDocument = /<!doctype[\t\n\f\r >]|<(?:html|head)(?=[\t\n\f\r />])/i;
 // a tag is never doubled and the same build always injects to the same bytes.
 // Only a page someone opens gets the tag, and a fragment a prototype fetches and inserts (htmx's hx-get, fetch and
 // innerHTML) is left as it is: a tag there would become its first child, and htmx would run it. A page is told apart by
-// a doctype, an <html> or a <head>, in any case.
-export function injectFrameScript(html, id) {
-  if (!isDocument.test(html)) return html;
+// a doctype, an <html> or a <head>, in any case. A version's entry page always gets it (page: true), since a hand-written
+// index.html may start straight at <h1>.
+export function injectFrameScript(html, id, { page = isDocument.test(html) } = {}) {
+  if (!page) return html;
   let position = bom.exec(html)?.[0].length ?? 0;
   let insertAt = position;
   const skip = pattern => {

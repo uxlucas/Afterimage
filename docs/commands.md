@@ -74,7 +74,7 @@ A save copies the prototype folder with these rules:
 - A symbolic link stops the save. Remove it, or add it to `exclude`.
 - When the prototype is the project root, the project's own files stay out: `node_modules`, `afterimage`, `.afterimage`, `package.json`, `afterimage.config.json`, `vercel.json`, `netlify.toml`, the lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`), and a top-level README, LICENSE, CHANGELOG, CONTRIBUTING, CLAUDE, AGENTS or GEMINI file, bare or ending in `.md`, `.markdown`, `.txt` or `.rst`.
 
-Each saved HTML page gets one tag added at the start of its `<head>`, `<script src="/afterimage/frame.js" data-afterimage-version="v4">`, which lets a built app load inside the viewer. A page is an `.html` file with a doctype, an `<html>` or a `<head>`. An HTML fragment without any of them, such as a partial the prototype fetches and inserts, is saved as it is. Nothing else in the files changes.
+Each saved HTML page gets one tag added at the start of its `<head>`, `<script src="/afterimage/frame.js" data-afterimage-version="v4">`, which lets a built app load inside the viewer. A page is the version's top `index.html`, and any other `.html` file with a doctype, an `<html>` or a `<head>`. An HTML fragment without any of them, such as a partial the prototype fetches and inserts, is saved as it is. Nothing else in the files changes.
 
 ## dev
 

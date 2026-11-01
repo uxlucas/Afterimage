@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveVersion, readHistory, verifyHistory, readSnapshot, fingerprint } from '../src/cli/history.js';
 import { validateManifest } from '../src/engine/manifest.js';
+import { frameTag } from '../src/runtime/map.js';
 
 const northwind = fileURLToPath(new URL('../examples/northwind/afterimage/', import.meta.url));
 
@@ -52,6 +53,16 @@ test('the first save creates versions.json with v1', async t => {
   assert.equal(manifest.versions[0].file, 'versions/v1/index.html');
   assert.deepEqual(manifest.versions[0], version);
   assert.deepEqual(await leftovers(historyDir), []);
+});
+
+test('a bare index.html still gets the frame tag, and a fragment beside it is saved as it is', async t => {
+  const { historyDir, sourceDir, options } = await fixture(t, { seeded: false });
+  await write(sourceDir, { 'index.html': '<h1>Hello</h1>', 'rows.html': '<li>Row</li>', 'about/index.html': '<p>About</p>' });
+  await saveVersion(options, { name: 'Bare' });
+  const saved = name => fs.readFile(path.join(historyDir, 'versions/v1', name), 'utf8');
+  assert.equal(await saved('index.html'), `${frameTag('v1')}<h1>Hello</h1>`);
+  assert.equal(await saved('rows.html'), '<li>Row</li>');
+  assert.equal(await saved('about/index.html'), '<p>About</p>');
 });
 
 test('a history folder that does not exist yet is created by the first save', async t => {

@@ -67,11 +67,12 @@ export function fingerprint(files) {
 
 // Every saved page loads the frame runtime first, so a built app finds its files and its routes inside the viewer
 // (src/runtime/sw.js says how). latin1 turns each byte into one character and back, so only the inserted tag
-// changes. A UTF-16 page would be corrupted by single-byte text, so it is saved as it is.
+// changes. A UTF-16 page would be corrupted by single-byte text, so it is saved as it is. The entry page, index.html at
+// the top, is a page however bare it is.
 function withFrameScript(files, id) {
   const isUtf16 = bytes => (bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff);
   return new Map([...files].map(([name, bytes]) => [name, path.extname(name).toLowerCase() === '.html' && !isUtf16(bytes)
-    ? Buffer.from(injectFrameScript(bytes.toString('latin1'), id), 'latin1')
+    ? Buffer.from(injectFrameScript(bytes.toString('latin1'), id, name === 'index.html' ? { page: true } : undefined), 'latin1')
     : bytes]));
 }
 

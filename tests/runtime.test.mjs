@@ -153,6 +153,11 @@ test('a fragment a prototype fetches and inserts is left byte for byte; a doctyp
   assert.equal(injectFrameScript('<Head><title>x</title>', 'v2'), `<Head>${tag('v2')}<title>x</title>`);
 });
 
+test('a page marked as one gets the tag even when it starts straight at its content', () => {
+  assert.equal(injectFrameScript('<h1>One</h1>', 'v2', { page: true }), `${tag('v2')}<h1>One</h1>`);
+  assert.equal(injectFrameScript('<!doctype html><p>x', 'v2', { page: false }), '<!doctype html><p>x');
+});
+
 test('injecting never touches another byte, and is never doubled', () => {
   const page = '<!doctype html>\r\n<html>\r\n<head>\r\n<meta charset="utf-8">\r\n</head><body>\u00e9</body></html>';
   const once = injectFrameScript(page, 'v4');
