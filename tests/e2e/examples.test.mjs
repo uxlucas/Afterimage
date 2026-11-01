@@ -1,4 +1,4 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -7,6 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkExample, servePlain } from './harness.mjs';
+
+// Each check gets three minutes, so one that hangs fails by name instead of stalling the run. (--test-timeout would
+// also cap the whole file.)
+const test = (name, fn) => nodeTest(name, { timeout: 180_000 }, fn);
 
 const example = name => fileURLToPath(new URL(`../../examples/${name}/`, import.meta.url));
 const fixture = name => fileURLToPath(new URL(`./fixtures/${name}/`, import.meta.url));

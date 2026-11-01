@@ -23,7 +23,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # macOS runners use the Google Chrome they come with: with Chrome for Testing from setup-chrome, the first
+      # e2e test there never finished. With CHROME_PATH empty the harness uses the installed Chrome.
       - id: chrome
+        if: runner.os != 'macOS'
         uses: browser-actions/setup-chrome@v2
       # pretest:e2e builds the viewer and installs the examples first. The examples' copies link back to their installs, and
       # SvelteKit cannot build across drives, so the temp folder goes on the checkout's drive (D: on Windows runners, not C:).

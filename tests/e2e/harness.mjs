@@ -318,7 +318,9 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
   let browser;
   try {
     // CI installs its own Chrome and names it in CHROME_PATH; elsewhere the installed Chrome is used.
-    browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' });
+    const chrome = process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' };
+    // A Chrome that never finishes starting fails here, within a minute, rather than holding the test.
+    browser = await chromium.launch({ ...chrome, timeout: 60_000 });
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
     const requests = watchRequests(page, server.origin, appMisses);
     // atRoot: the step opened the app at / itself, so root paths are expected there.
