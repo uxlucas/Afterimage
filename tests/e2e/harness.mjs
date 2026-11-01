@@ -457,10 +457,25 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     const pillMatch = /(\d+) changes?$/.exec(pillLabel ?? '');
     assert.ok(pillMatch, `The pill's label is "${pillLabel}", which does not end in a change count. Did the viewer rename it?`);
     const pillCount = Number(pillMatch[1]);
-    if (expectCount !== undefined) assert.equal(pillCount, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the pill shows ${pillCount}`);
     await highlight.click();
     await page.getByRole('button', { name: /^Show versions$|\. Show versions$/ }).first().click();
     const dialog = page.getByRole('dialog');
+    // The panel's rows, as [kind] text lines: the summary button names the count, and opens the list.
+    const listedChanges = async () => {
+      const summary = dialog.getByRole('button', { name: new RegExp(`^\\d+ changes? from ${previous.id} to ${newest.id}$`) });
+      await summary.waitFor({ timeout: loadTimeout });
+      const count = Number(/^(\d+)/.exec(text(await summary.innerText()))[1]);
+      if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click();
+      const list = dialog.getByRole('list', { name: 'Changes' });
+      await list.waitFor({ timeout: loadTimeout });
+      const rows = (await list.getByRole('listitem').locator('button[data-kind]').evaluateAll(buttons => buttons.map(button => ({ kind: button.dataset.kind, text: button.innerText })))).map(row => ({ kind: row.kind, text: text(row.text) }));
+      return { count, rows, listing: rows.map(row => `[${row.kind}] ${row.text}`).join('\n') };
+    };
+    if (expectCount !== undefined && pillCount !== expectCount) {
+      // What the viewer counted is the first thing to know about a wrong count, so it goes in the message when it can.
+      const found = pillCount > 0 ? await listedChanges().catch(() => null) : null;
+      assert.fail(`Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the pill shows ${pillCount}${found ? `. The list has:\n${found.listing}` : ''}`);
+    }
     if (expectCount === 0) {
       // Nothing changed: the panel says so where the summary button would be, and has no list to open.
       await dialog.getByText(`No visible changes from ${previous.id} to ${newest.id}`).waitFor({ timeout: loadTimeout });
@@ -469,17 +484,10 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
       report.changes = { from: previous.id, to: newest.id, count: 0, rows: [] };
       return report;
     }
-    const summary = dialog.getByRole('button', { name: new RegExp(`^\\d+ changes? from ${previous.id} to ${newest.id}$`) });
-    await summary.waitFor({ timeout: loadTimeout });
-    const count = Number(/^(\d+)/.exec(text(await summary.innerText()))[1]);
+    const { count, rows, listing } = await listedChanges();
     assert.ok(count > 0, `Expected changes between ${previous.id} and ${newest.id}, the viewer found ${count}`);
-    if (expectCount !== undefined) assert.equal(count, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the viewer found ${count}`);
-    if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click();
-    const list = dialog.getByRole('list', { name: 'Changes' });
-    await list.waitFor({ timeout: loadTimeout });
-    const rows = (await list.getByRole('listitem').locator('button[data-kind]').evaluateAll(buttons => buttons.map(button => ({ kind: button.dataset.kind, text: button.innerText })))).map(row => ({ kind: row.kind, text: text(row.text) }));
+    if (expectCount !== undefined) assert.equal(count, expectCount, `Expected ${expectCount} changes between ${previous.id} and ${newest.id}, the viewer found ${count}. The list has:\n${listing}`);
     assert.ok(rows.length > 0, 'The change list has no rows');
-    const listing = rows.map(row => `[${row.kind}] ${row.text}`).join('\n');
     if (expectCount !== undefined) assert.equal(rows.length, expectCount, `Expected ${expectCount} rows. The list has:\n${listing}`);
     if (expectChange) assert.ok(rows.some(row => row.kind !== 'removed' && row.text.includes(expectChange)), `Expected an added or changed row to mention "${expectChange}". The list has:\n${listing}`);
     noFailures(`Changes ${previous.id} to ${newest.id}`);
