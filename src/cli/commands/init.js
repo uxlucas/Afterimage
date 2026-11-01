@@ -106,7 +106,12 @@ const needSource = reason => new Error(`${reason}\nSay where the prototype is: a
 // when a custom build produces it.
 async function chooseSetup(cwd, flags, { isTTY, ask }) {
   const detection = await detectProject(cwd);
-  const serverFix = { 'next-server': "output: 'export' in next.config", 'astro-server': "output: 'static' in the astro config" }[detection.type];
+  // What would give the project a static build to save. For Astro that is only about saving: the adapter still writes
+  // .vercel/output, so deploying the history on Vercel needs it removed too (planVercel says so).
+  const serverFix = {
+    'next-server': "output: 'export' in next.config",
+    'astro-server': "output: 'static' in the astro config (to save its static build; the history can only deploy on Vercel without @astrojs/vercel)"
+  }[detection.type];
   if (serverFix && !flags.source) {
     throw new Error(`${detection.reason}\nSet ${serverFix} and run "afterimage init" again, or pass --source <folder> if a build writes static files somewhere else.`);
   }
@@ -233,9 +238,16 @@ export const slashRedirect = { source: '/afterimage', destination: '/afterimage/
 
 // A rule counts as ours when it points at <path>.html and keeps /afterimage out, however the rest is spelled.
 const isCleanUrlRewrite = rule => typeof rule?.destination === 'string' && /^\/:\w+\*?\.html$/.test(rule.destination) && typeof rule.source === 'string' && rule.source.includes('afterimage');
-const isSlashRedirect = rule => typeof rule?.source === 'string' && rule.source.replace(/\/+$/, '') === slashRedirect.source;
+const fromAfterimage = rule => typeof rule?.source === 'string' && rule.source.trim().replace(/\/+$/, '') === slashRedirect.source;
+// Ours is a redirect from /afterimage to /afterimage/. One from there to anywhere else is the project's, and shadows the history.
+const isSlashRedirect = rule => fromAfterimage(rule) && typeof rule.destination === 'string' && rule.destination.trim() === slashRedirect.destination;
 
 const cleanUrlsNote = 'vercel.json has "cleanUrls": true. It also redirects the history\'s own pages (/afterimage/versions/vN/index.html), so the history will not open. Remove it: Afterimage\'s rewrite gives the live app clean URLs without touching /afterimage/.';
+// @astrojs/vercel writes Vercel's own .vercel/output on every build, whatever the output mode (astro:build:done, no check
+// of the environment): https://github.com/withastro/astro/blob/main/packages/integrations/vercel/src/index.ts. After a
+// build Vercel's static builder deploys that folder in place of outputDirectory, so /afterimage/ would not be there. Not
+// tried on a real deploy; the files are the project's, so init only says so.
+const astroVercelNote = 'package.json depends on @astrojs/vercel. The adapter writes its own .vercel/output on every build, and Vercel deploys that folder instead of the Afterimage site, so /afterimage/ will not be there. A static site does not need the adapter: remove @astrojs/vercel (and its adapter line in the astro config) to deploy the history on Vercel.';
 const trailingSlashNote = value => `vercel.json has "trailingSlash": ${value}. It redirects paths under /afterimage/ ${value ? 'to a trailing slash, so a version\'s pages are never asked for the way the worker expects' : 'away from the trailing slash, so the viewer\'s relative files load from the wrong folder'}, and the history will not open. Remove it. Afterimage left the rest of vercel.json as it was.`;
 
 // Whether a list in vercel.json (rewrites, redirects) needs our entry added after the project's own, which keep their order.
@@ -253,6 +265,7 @@ async function planVercel(cwd, { isTTY, ask }) {
   const settings = before === null ? {} : parseJson(before, 'vercel.json');
   const wanted = hostSettings(await usesNext(cwd));
   const notes = [];
+  if (await dependsOn(cwd, '@astrojs/vercel')) notes.push(astroVercelNote);
 
   // null means "use the default" in vercel.json, so it is as free as a missing key. For framework it is the wanted
   // value itself ("Other"), so only a framework that is named differs.
@@ -268,7 +281,13 @@ async function planVercel(cwd, { isTTY, ask }) {
     notes.push(trailingSlashNote(settings.trailingSlash));
   } else {
     if (settings.cleanUrls !== true) lists.rewrites = planList(settings, 'rewrites', cleanUrlRewrite, isCleanUrlRewrite, 'for clean URLs on the live app');
-    lists.redirects = planList(settings, 'redirects', slashRedirect, isSlashRedirect, 'so /afterimage opens the viewer');
+    const shadowing = Array.isArray(settings.redirects) && settings.redirects.find(rule => fromAfterimage(rule) && !isSlashRedirect(rule));
+    if (shadowing) {
+      // A second redirect from the same path would never run, so none is added.
+      notes.push(`vercel.json redirects ${shadowing.source} to ${shadowing.destination}, which shadows the history: the viewer cannot open there. Afterimage left it alone. Remove it, or point it at ${slashRedirect.destination}.`);
+    } else {
+      lists.redirects = planList(settings, 'redirects', slashRedirect, isSlashRedirect, 'so /afterimage opens the viewer');
+    }
   }
   const added = {};
   for (const [key, plan] of Object.entries(lists)) {
@@ -315,15 +334,17 @@ async function planVercel(cwd, { isTTY, ask }) {
 
 // Whether the project depends on Next.js, however init was told where its prototype is. Netlify and Vercel detect the
 // framework from package.json, not from what Afterimage decided.
-async function usesNext(cwd) {
+async function dependsOn(cwd, name) {
   const { body } = await readJsonText(path.join(cwd, 'package.json'));
   try {
     const manifest = JSON.parse(body ?? '{}');
-    return 'next' in { ...manifest?.dependencies, ...manifest?.devDependencies };
+    return name in { ...manifest?.dependencies, ...manifest?.devDependencies };
   } catch {
     return false;
   }
 }
+
+const usesNext = cwd => dependsOn(cwd, 'next');
 
 // Netlify's Next.js runtime (OpenNext), which Netlify installs for a Next.js project, treats a static export as its own
 // to deploy: after the build it copies the export's folder (out/) over the publish directory, so /afterimage/ would not

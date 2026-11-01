@@ -222,12 +222,24 @@ test('our rewrite and redirect in another spelling are recognised and not added 
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
   const rewrites = [{ source: '/:path((?!afterimage(?:/|$)).*)', destination: '/:path.html' }];
-  const redirects = [{ source: '/afterimage/', destination: '/afterimage/', permanent: false }];
+  const redirects = [{ source: '/afterimage', destination: '/afterimage/', permanent: false }];
   await write(root, 'vercel.json', JSON.stringify({ buildCommand: hostBuild, outputDirectory: hostOutput, rewrites, redirects }));
   const original = await read(root, 'vercel.json');
   const result = await run(root);
   assert.equal(await read(root, 'vercel.json'), original);
   assert.doesNotMatch(result.stdout, /vercel\.json/);
+});
+
+test('a project\'s own redirect from /afterimage to somewhere else is left alone and called out, and none of ours is added', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  const redirects = [{ source: '/afterimage', destination: '/elsewhere' }];
+  await write(root, 'vercel.json', JSON.stringify({ redirects }));
+  const result = await run(root);
+  assert.deepEqual((await readJson(root, 'vercel.json')).redirects, redirects);
+  assert.match(result.stdout, /vercel\.json redirects \/afterimage to \/elsewhere, which shadows the history/);
+  assert.match(result.stdout, /^Updated vercel\.json \(set buildCommand, outputDirectory, rewrites\)$/m);
+  assert.match((await run(root)).stdout, /shadows the history/);
 });
 
 test('only the missing vercel.json keys are named as set', async t => {
@@ -370,12 +382,36 @@ test('Astro with the Vercel adapter has no static build unless the config says o
   const result = await run(root);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /@astrojs\/vercel, a server adapter/);
-  assert.match(result.stderr, /output: 'static' in the astro config/);
+  assert.match(result.stderr, /output: 'static' in the astro config \(to save its static build; the history can only deploy on Vercel without @astrojs\/vercel\)/);
   assert.deepEqual(await snapshot(root), before);
 
   await write(root, 'astro.config.mjs', "import vercel from '@astrojs/vercel';\nexport default { output: 'static', adapter: vercel() };\n");
-  assert.equal((await run(root)).code, 0);
+  const saved = await run(root);
+  assert.equal(saved.code, 0, saved.stderr);
   assert.equal((await readConfig(root)).source, 'dist');
+  // The adapter writes .vercel/output whatever the output mode, and Vercel deploys that instead of the Afterimage site.
+  assert.match(saved.stdout, /package\.json depends on @astrojs\/vercel\. The adapter writes its own \.vercel\/output on every build, and Vercel deploys that folder instead of the Afterimage site/);
+  assert.match(saved.stdout, /remove @astrojs\/vercel/);
+});
+
+test('the Astro adapter note is only for projects that have the adapter, and never changes the exit code or files', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ dependencies: { astro: '5.0.0' } }));
+  const plain = await run(root);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /@astrojs\/vercel/);
+
+  const other = await temp(t);
+  await write(other, 'package.json', JSON.stringify({ dependencies: { astro: '5.0.0', '@astrojs/vercel': '8.0.0' } }));
+  await write(other, 'astro.config.mjs', "export default { output: 'static' };\n");
+  const first = await run(other);
+  const files = await snapshot(other);
+  const second = await run(other);
+  assert.equal(second.code, 0);
+  assert.deepEqual(await snapshot(other), files, 'a second run changes nothing');
+  assert.match(second.stdout, /^No files changed\. Still left for you:$/m);
+  assert.match(second.stdout, /depends on @astrojs\/vercel/);
+  assert.match(first.stdout, /depends on @astrojs\/vercel/);
 });
 
 test('an existing vercel.json keeps its other keys', async t => {

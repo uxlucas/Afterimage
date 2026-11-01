@@ -109,7 +109,7 @@ function rewriteTest({ source, destination }) {
 //                         that leaves the trailing slash off, which is the harder one for the runtime), and /x is
 //                         answered from x.html or x/index.html. It covers /afterimage/ too, as the setting is site-wide.
 // Returns { origin, root, take, redirected, close } like serve(); redirected() lists what the host redirected.
-async function servePlain(site, { cleanUrls = 'none' } = {}) {
+export async function servePlain(site, { cleanUrls = 'none' } = {}) {
   const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage e2e host-'));
   const root = path.join(parent, 'site root');
   const removeCopy = () => fs.rm(parent, { recursive: true, force: true });

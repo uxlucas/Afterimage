@@ -6,7 +6,7 @@ import { rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkExample } from './harness.mjs';
+import { checkExample, servePlain } from './harness.mjs';
 
 const example = name => fileURLToPath(new URL(`../../examples/${name}/`, import.meta.url));
 const fixture = name => fileURLToPath(new URL(`./fixtures/${name}/`, import.meta.url));
@@ -109,7 +109,9 @@ test('sveltekit-static: both prerendered routes render inside the viewer, and th
 // Stands in for a Vercel or Netlify deployment until a real preview can be tried (spec criterion 3): a fresh copy of the
 // built site, in a folder with a space in its name, on an unexpected port, served by a host that maps paths straight to
 // files. The first test is the main one. The rest show the worker's clean-URL fallback doing its job on a host that has
-// no clean URLs of its own: Next's about.html, SvelteKit's about.html and Astro's about/index.html all have to be found.
+// no clean URLs of its own: Next's about.html and SvelteKit's about.html have to be found by the worker on this host. Astro's
+// about/index.html is found by the host's own 301 to /about/ here (it stands in for Netlify); the worker's redirect for it
+// is proved by the astro test above, on the harness's own server, which leaves folders under /afterimage/ to the worker.
 function assertPlainHost(report, cleanUrls = 'none') {
   assert.equal(report.host.cleanUrls, cleanUrls);
   assert.match(report.host.root, / /, 'The host folder has no space in its path');
@@ -121,6 +123,14 @@ test('the site works from a fresh copy of out/ served by a plain static server',
   const report = await checkExample(dir, { ...checks['vite-react'].options, plain: true });
   assertPlainHost(report);
   checks['vite-react'].verify(report);
+});
+
+// The host's temporary folder goes when it cannot start (here, a site that is not there), so failed runs leave nothing behind.
+test('the plain host removes its temporary folder when it cannot be set up', async () => {
+  const left = () => fs.readdir(os.tmpdir()).then(names => names.filter(name => name.startsWith('afterimage e2e host-')));
+  const before = await left();
+  await assert.rejects(servePlain(path.join(os.tmpdir(), 'afterimage-e2e-no-such-site')), { code: 'ENOENT' });
+  assert.deepEqual(await left(), before);
 });
 
 for (const name of ['northwind', 'astro', 'sveltekit-static']) {

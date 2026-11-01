@@ -67,8 +67,9 @@ export async function detectProject(projectDir) {
     return found('sveltekit-static', pages, 'npm run build', `Found SvelteKit with adapter-static; it builds to ${pages}/.`);
   }
   if (has('astro')) {
-    // @astrojs/vercel is a server adapter: its build is Vercel's own output (.vercel/output), not a dist/ of plain files.
-    // Only a config that says output: 'static' puts it back to static files.
+    // @astrojs/vercel is a server adapter by default: unless the config says output: 'static', there is no dist/ of plain
+    // pages to save. With output: 'static' dist/ is there and can be saved. That is all it settles: the adapter still
+    // writes .vercel/output on every build, which Vercel deploys in place of the Afterimage site (init says so).
     if (has('@astrojs/vercel')) {
       const config = await readFirst(projectDir, ['astro.config.mjs', 'astro.config.js', 'astro.config.cjs', 'astro.config.ts', 'astro.config.mts']);
       if (config === null || !/\boutput\s*:\s*['"`]static['"`]/.test(config)) {
