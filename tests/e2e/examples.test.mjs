@@ -144,8 +144,9 @@ test('next-static: the live app at / needs clean URLs from its host, and the rew
 
 // Why init does not write cleanUrls: true. It is site-wide, so /afterimage/versions/vN/index.html is redirected out of the
 // version folder (and about.html to about), and the frame runtime and the viewer, which match on those exact paths, never
-// settle on the version. The host here is an emulation of the documented behaviour; if the runtime ever learns to follow
-// such a redirect, this test is the one to turn around.
+// settle on the version. The host's redirects are Vercel's own (convertCleanUrls in @vercel/routing-utils: the .html and
+// index.html patterns, 308). The test fails only on that: the error must list the host's 308 of a version's index.html, so
+// an unrelated timeout does not pass it. If the runtime ever learns to follow such a redirect, this is the test to turn around.
 test('a host with cleanUrls: true redirects a version out of its folder, and the viewer cannot show it', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -157,7 +158,7 @@ test('a host with cleanUrls: true redirects a version out of its folder, and the
   afterimage(dir, 'save', 'Two');
   const build = () => afterimage(dir, 'build');
   await checkExample(dir, { expectChange: 'Page one, revised', build, plain: { cleanUrls: 'rewrite' } });
-  await assert.rejects(checkExample(dir, { expectChange: 'Page one, revised', build, plain: { cleanUrls: 'redirect' } }), /Timeout 15000ms exceeded/);
+  await assert.rejects(checkExample(dir, { expectChange: 'Page one, revised', build, plain: { cleanUrls: 'redirect' } }), /Timeout 15000ms[\s\S]*The host redirected:[\s\S]*308 \/afterimage\/versions\/v\d+\/index\.html -> \/afterimage\/versions\/v\d+(\n|$)/);
 });
 
 // The harness itself: a version that lost one of its files must fail the check, or the passes above mean nothing.

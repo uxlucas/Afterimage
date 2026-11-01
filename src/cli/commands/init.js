@@ -19,8 +19,8 @@ const hostBuild = 'npm run afterimage:build';
 const hostOutput = '.afterimage/site';
 
 // Clean URLs for the live app at the root, on Vercel: /about is answered from about.html (Next's and SvelteKit's static
-// exports write that and link to /about). Vercel only does so by default for a framework it builds itself, and the
-// history is deployed as a plain folder (framework: null, below). cleanUrls: true would give the same, site-wide, and
+// exports write that and link to /about). Vercel only does so by default for a framework it builds itself (Next.js, until
+// framework: null, below), and not for a plain folder. cleanUrls: true would give the same, site-wide, and
 // redirect /afterimage/versions/vN/index.html to a path that is no longer inside the version folder, which the frame
 // runtime and the viewer cannot follow. A rewrite is not a redirect, only applies where no file has the path (Vercel
 // checks the filesystem first), and this one leaves /afterimage/ out altogether. tests/e2e/harness.mjs reads it.
@@ -106,8 +106,9 @@ const needSource = reason => new Error(`${reason}\nSay where the prototype is: a
 // when a custom build produces it.
 async function chooseSetup(cwd, flags, { isTTY, ask }) {
   const detection = await detectProject(cwd);
-  if (detection.type === 'next-server' && !flags.source) {
-    throw new Error(`${detection.reason}\nSet output: 'export' in next.config and run "afterimage init" again, or pass --source <folder> if a build writes static files somewhere else.`);
+  const serverFix = { 'next-server': "output: 'export' in next.config", 'astro-server': "output: 'static' in the astro config" }[detection.type];
+  if (serverFix && !flags.source) {
+    throw new Error(`${detection.reason}\nSet ${serverFix} and run "afterimage init" again, or pass --source <folder> if a build writes static files somewhere else.`);
   }
   let source = flags.source;
   if (!source && detection.source === null) {
@@ -213,44 +214,69 @@ const hasTextRule = (existing, rule) => {
 const stripSlashes = line => line.trim().replace(/^\/+|\/+$/g, '');
 const hasIgnore = (existing, line) => stripSlashes(existing) === stripSlashes(line);
 
-// What vercel.json needs for the history to deploy, in the order it is written.
-// framework: null ("Other") makes Vercel serve the output folder as plain files. With a framework detected, Vercel's own
-// builder takes over instead: for Next.js, @vercel/next finds .next/export-detail.json after the build and serves the
-// export's folder (out/), not outputDirectory, so /afterimage/ would not deploy. Next.js is the one read in the builder's
-// source; the others are set the same way so no preset can do the same. The preset's own clean URLs go with it, which is
-// what cleanUrlRewrite replaces.
-const hostSettings = { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput };
-const hostKeys = [...Object.keys(hostSettings), 'rewrites'];
-const hostValues = JSON.stringify({ ...hostSettings, rewrites: [cleanUrlRewrite] }, null, 2).slice(2, -2);
+// What vercel.json needs for the history to deploy, and for the live app to stay as it is.
+//
+// Next.js: "framework": null ("Other") makes Vercel serve the output folder as plain files. With Next.js detected, Vercel's
+// own builder takes over: @vercel/next finds .next/export-detail.json after the build and serves the export's folder (out/),
+// not outputDirectory, so /afterimage/ would not deploy. Vercel detects the framework from package.json, so this is keyed
+// on a dependency on next and not on the type init chose. It costs the live app the builder's _next/static caching and its
+// .html stripping, which the rewrite below brings back for the stripping. Other presets (Vite, Astro, SvelteKit) run in
+// @vercel/static-build, which uses outputDirectory ahead of the preset's own folder, and null would cost them their cache
+// headers or SPA fallback, so they are left as they are.
+// Source: https://github.com/vercel/vercel/blob/main/packages/next/src/index.ts
+const hostSettings = (next) => (next ? { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput } : { buildCommand: hostBuild, outputDirectory: hostOutput });
 
-const sameRewrite = rewrite => rewrite?.source === cleanUrlRewrite.source && rewrite?.destination === cleanUrlRewrite.destination;
+// /afterimage without its slash is answered by Vercel with the viewer's page and a 200, and the viewer's relative assets
+// then load from the root. The redirect adds the slash. Vercel's redirect source matches that path exactly, so /afterimage/
+// is not caught and nothing loops.
+export const slashRedirect = { source: '/afterimage', destination: '/afterimage/' };
+
+// A rule counts as ours when it points at <path>.html and keeps /afterimage out, however the rest is spelled.
+const isCleanUrlRewrite = rule => typeof rule?.destination === 'string' && /^\/:\w+\*?\.html$/.test(rule.destination) && typeof rule.source === 'string' && rule.source.includes('afterimage');
+const isSlashRedirect = rule => typeof rule?.source === 'string' && rule.source.replace(/\/+$/, '') === slashRedirect.source;
 
 const cleanUrlsNote = 'vercel.json has "cleanUrls": true. It also redirects the history\'s own pages (/afterimage/versions/vN/index.html), so the history will not open. Remove it: Afterimage\'s rewrite gives the live app clean URLs without touching /afterimage/.';
+const trailingSlashNote = value => `vercel.json has "trailingSlash": ${value}. It redirects paths under /afterimage/ ${value ? 'to a trailing slash, so a version\'s pages are never asked for the way the worker expects' : 'away from the trailing slash, so the viewer\'s relative files load from the wrong folder'}, and the history will not open. Remove it. Afterimage left the rest of vercel.json as it was.`;
+
+// Whether a list in vercel.json (rewrites, redirects) needs our entry added after the project's own, which keep their order.
+// → { add } or { note } when the value is not a list, or neither when the entry is already there.
+function planList(settings, key, entry, isPresent, purpose) {
+  const list = settings[key];
+  if (list === undefined) return { add: [entry] };
+  if (!Array.isArray(list)) return { note: `vercel.json "${key}" is not a list, so Afterimage left it alone. Add this to it ${purpose}:\n${JSON.stringify(entry, null, 2)}` };
+  return list.some(isPresent) ? {} : { add: [...list, entry] };
+}
 
 async function planVercel(cwd, { isTTY, ask }) {
   const file = path.join(cwd, 'vercel.json');
   const { bom, body: before } = await readJsonText(file);
   const settings = before === null ? {} : parseJson(before, 'vercel.json');
+  const wanted = hostSettings(await usesNext(cwd));
   const notes = [];
 
   // null means "use the default" in vercel.json, so it is as free as a missing key. For framework it is the wanted
   // value itself ("Other"), so only a framework that is named differs.
-  const differs = ['buildCommand', 'outputDirectory'].filter(key => settings[key] != null && settings[key] !== hostSettings[key]);
-  if (typeof settings.framework === 'string') differs.push('framework');
-  const missing = ['buildCommand', 'outputDirectory'].filter(key => settings[key] == null);
-  if (!Object.hasOwn(settings, 'framework')) missing.push('framework');
-  const set = [...missing];
+  const differs = ['buildCommand', 'outputDirectory'].filter(key => settings[key] != null && settings[key] !== wanted[key]);
+  if (Object.hasOwn(wanted, 'framework') && typeof settings.framework === 'string') differs.push('framework');
+  const set = Object.keys(wanted).filter(key => (key === 'framework' ? !Object.hasOwn(settings, key) : settings[key] == null));
 
-  // The rewrite goes after the project's own, which keep their order. cleanUrls: true is left to the person (and called
-  // out), as are rewrites that are not a list.
-  let rewrites = null;
-  if (settings.cleanUrls === true) {
-    notes.push(cleanUrlsNote);
-  } else if (settings.rewrites !== undefined && !Array.isArray(settings.rewrites)) {
-    notes.push(`vercel.json "rewrites" is not a list, so Afterimage left it alone. Add this to it for clean URLs on the live app:\n${JSON.stringify(cleanUrlRewrite, null, 2)}`);
-  } else if (!(settings.rewrites ?? []).some(sameRewrite)) {
-    rewrites = [...(settings.rewrites ?? []), cleanUrlRewrite];
-    set.push('rewrites');
+  // cleanUrls and trailingSlash redirect paths under /afterimage/ site-wide. They are the person's, so they stay and are
+  // called out. A trailingSlash also makes both entries below pointless (or, set to false, loop with the redirect).
+  const lists = {};
+  if (settings.cleanUrls === true) notes.push(cleanUrlsNote);
+  if (typeof settings.trailingSlash === 'boolean') {
+    notes.push(trailingSlashNote(settings.trailingSlash));
+  } else {
+    if (settings.cleanUrls !== true) lists.rewrites = planList(settings, 'rewrites', cleanUrlRewrite, isCleanUrlRewrite, 'for clean URLs on the live app');
+    lists.redirects = planList(settings, 'redirects', slashRedirect, isSlashRedirect, 'so /afterimage opens the viewer');
+  }
+  const added = {};
+  for (const [key, plan] of Object.entries(lists)) {
+    if (plan.note) notes.push(plan.note);
+    if (plan.add) {
+      added[key] = plan.add;
+      set.push(key);
+    }
   }
   if (!differs.length && !set.length) return { change: null, notes, apply: null };
 
@@ -269,13 +295,19 @@ async function planVercel(cwd, { isTTY, ask }) {
           : `vercel.json already serves ${settings.outputDirectory}. Switch it to Afterimage's output? (y/N)`;
     const agreed = isTTY && /^y(es)?$/i.test((await ask(question)).trim());
     if (!agreed) {
-      return { change: null, notes: [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${hostValues}`, ...notes], apply: null };
+      // Values to set, and entries to add to lists the project may already have: pasting must never replace its own rules.
+      const lines = [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${JSON.stringify(wanted, null, 2).slice(2, -2)}`];
+      for (const [key, entry] of [['rewrites', cleanUrlRewrite], ['redirects', slashRedirect]]) {
+        if (key in added) lines.push(`and add this to "${key}", keeping the rules already there:\n${JSON.stringify(entry, null, 2)}`);
+      }
+      return { change: null, notes: [lines.join('\n'), ...notes], apply: null };
     }
     set.unshift(...differs.filter(key => !set.includes(key)));
   }
-  const text = JSON.stringify({ ...settings, ...hostSettings, ...(rewrites && { rewrites }) }, null, 2);
+  const order = [...Object.keys(wanted), 'rewrites', 'redirects'];
+  const text = JSON.stringify({ ...settings, ...wanted, ...added }, null, 2);
   return {
-    change: before === null ? 'Created vercel.json' : `Updated vercel.json (set ${hostKeys.filter(key => set.includes(key)).join(', ')})`,
+    change: before === null ? 'Created vercel.json' : `Updated vercel.json (set ${order.filter(key => set.includes(key)).join(', ')})`,
     notes,
     apply: writer(file, `${bom}${text}\n`)
   };

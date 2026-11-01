@@ -1,11 +1,16 @@
 {
   "buildCommand": "npm run afterimage:build",
   "outputDirectory": ".afterimage/site",
-  "framework": null,
   "rewrites": [
     {
       "source": "/:path((?!afterimage/|afterimage$).+)",
       "destination": "/:path*.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/afterimage",
+      "destination": "/afterimage/"
     }
   ]
 }

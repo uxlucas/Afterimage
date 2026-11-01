@@ -51,6 +51,8 @@ const hostBuild = 'npm run afterimage:build';
 const hostOutput = '.afterimage/site';
 // What init asks of Vercel for clean URLs on the live app: a rewrite that leaves /afterimage/ out, never cleanUrls.
 const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)', destination: '/:path*.html' };
+// And the slash on /afterimage, which Vercel otherwise answers with the viewer's page and no redirect.
+const slashRedirect = { source: '/afterimage', destination: '/afterimage/' };
 const lines = text => text.split(/\r?\n/);
 
 test('init in a plain folder creates package.json and ignores node_modules', async t => {
@@ -145,46 +147,93 @@ test('init writes vercel.json and netlify.toml with the host build and output', 
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
   await run(root);
-  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite] });
-  assert.match(await read(root, 'vercel.json'), /^\{\n {2}"framework": null,\n {2}"buildCommand": /);
+  assert.deepEqual(await readJson(root, 'vercel.json'), { buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
+  assert.match(await read(root, 'vercel.json'), /^\{\n {2}"buildCommand": /);
   assert.equal(await read(root, 'netlify.toml'), `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`);
 });
 
-// Vercel detects the framework from package.json and a framework's own builder can serve its own output instead of
-// outputDirectory (Next.js does), so the history needs "framework": null whatever the project is. The rewrite is how the
-// live app keeps clean URLs without that builder. Neither touches /afterimage/.
-test('vercel.json asks for no framework and a clean-URL rewrite that leaves /afterimage/ out', async t => {
-  const root = await temp(t);
+const nextProject = async root => {
   await write(root, 'package.json', JSON.stringify({ dependencies: { next: '15.0.0' } }));
   await write(root, 'next.config.mjs', "export default { output: 'export' };\n");
-  assert.equal((await run(root)).code, 0);
-  const settings = await readJson(root, 'vercel.json');
-  assert.equal(settings.framework, null);
-  assert.equal(settings.cleanUrls, undefined, 'cleanUrls would redirect the history\'s own pages');
-  const [rewrite] = settings.rewrites;
+};
+
+// Vercel detects the framework from package.json, and Next.js's own builder serves the export's folder (out/) instead of
+// outputDirectory, so a project that depends on next needs "framework": null. Other presets honour outputDirectory and
+// would lose cache headers or a SPA fallback to null, so they keep theirs. The rewrite is how the live app keeps clean
+// URLs without the Next builder, and the redirect puts the slash on /afterimage. None of them touches /afterimage/'s files.
+test('vercel.json of a Next.js project asks for no framework', async t => {
+  const root = await temp(t);
+  await nextProject(root);
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
+  assert.match(await read(root, 'vercel.json'), /^\{\n {2}"framework": null,\n {2}"buildCommand": /);
+  assert.match(result.stdout, /^Created vercel\.json$/m);
+});
+
+test('vercel.json of other projects names no framework, whatever the project uses', async t => {
+  for (const dependencies of [{ vite: '1.0.0' }, { astro: '5.0.0' }, { '@sveltejs/kit': '2.0.0', '@sveltejs/adapter-static': '3.0.0' }]) {
+    const root = await temp(t);
+    await write(root, 'package.json', JSON.stringify({ devDependencies: dependencies }));
+    await write(root, 'index.html', '<h1>Hi</h1>');
+    await run(root, ['--source', '.']);
+    assert.equal(Object.hasOwn(await readJson(root, 'vercel.json'), 'framework'), false, Object.keys(dependencies)[0]);
+  }
+});
+
+test('a framework another project names is not touched or asked about', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ devDependencies: { vite: '1.0.0' } }));
+  await write(root, 'vercel.json', JSON.stringify({ framework: 'vite' }));
+  const result = await run(root, [], { answers: [] });
+  assert.deepEqual(result.questions, []);
+  assert.equal((await readJson(root, 'vercel.json')).framework, 'vite');
+});
+
+test('the clean-URL rewrite matches every page and leaves /afterimage/ out', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await run(root);
+  const [rewrite] = (await readJson(root, 'vercel.json')).rewrites;
   const source = new RegExp(`^/(${/^\/:path\((.+)\)$/.exec(rewrite.source)[1]})$`);
   assert.equal(rewrite.destination, '/:path*.html');
   for (const path of ['/about', '/blog/post-1', '/afterimages', '/about/afterimage']) assert.ok(source.test(path), `${path} should be rewritten`);
   for (const path of ['/afterimage', '/afterimage/', '/afterimage/versions/v1/about', '/afterimage/index.html']) assert.ok(!source.test(path), `${path} must not be rewritten`);
+  assert.equal((await readJson(root, 'vercel.json')).cleanUrls, undefined, 'cleanUrls would redirect the history\'s own pages');
 });
 
-test('a project\'s own rewrites keep their order and the clean-URL rewrite goes last, once', async t => {
+test('a project\'s own rewrites and redirects keep their order and ours go last, once', async t => {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
   const own = { source: '/old', destination: '/new' };
-  await write(root, 'vercel.json', JSON.stringify({ rewrites: [own] }));
+  const ownRedirect = { source: '/a', destination: '/b' };
+  await write(root, 'vercel.json', JSON.stringify({ rewrites: [own], redirects: [ownRedirect] }));
   const result = await run(root);
-  assert.deepEqual((await readJson(root, 'vercel.json')).rewrites, [own, cleanUrlRewrite]);
-  assert.match(result.stdout, /^Updated vercel\.json \(set framework, buildCommand, outputDirectory, rewrites\)$/m);
+  const settings = await readJson(root, 'vercel.json');
+  assert.deepEqual(settings.rewrites, [own, cleanUrlRewrite]);
+  assert.deepEqual(settings.redirects, [ownRedirect, slashRedirect]);
+  assert.match(result.stdout, /^Updated vercel\.json \(set buildCommand, outputDirectory, rewrites, redirects\)$/m);
   const before = await snapshot(root);
   assert.match((await run(root)).stdout, /already set up/);
   assert.deepEqual(await snapshot(root), before);
 });
 
-test('only the missing vercel.json keys are named as set', async t => {
+test('our rewrite and redirect in another spelling are recognised and not added again', async t => {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
-  await write(root, 'vercel.json', JSON.stringify({ framework: null, buildCommand: hostBuild, outputDirectory: hostOutput }));
+  const rewrites = [{ source: '/:path((?!afterimage(?:/|$)).*)', destination: '/:path.html' }];
+  const redirects = [{ source: '/afterimage/', destination: '/afterimage/', permanent: false }];
+  await write(root, 'vercel.json', JSON.stringify({ buildCommand: hostBuild, outputDirectory: hostOutput, rewrites, redirects }));
+  const original = await read(root, 'vercel.json');
+  const result = await run(root);
+  assert.equal(await read(root, 'vercel.json'), original);
+  assert.doesNotMatch(result.stdout, /vercel\.json/);
+});
+
+test('only the missing vercel.json keys are named as set', async t => {
+  const root = await temp(t);
+  await nextProject(root);
+  await write(root, 'vercel.json', JSON.stringify({ framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, redirects: [slashRedirect] }));
   assert.match((await run(root)).stdout, /^Updated vercel\.json \(set rewrites\)$/m);
 });
 
@@ -202,38 +251,78 @@ test('cleanUrls: true is left alone and called out, since it takes the history\'
   assert.match(again.stdout, /"cleanUrls": true/);
 });
 
-test('rewrites that are not a list are left alone and the rest is still set', async t => {
+for (const value of [true, false]) {
+  test(`trailingSlash: ${value} is left alone and called out, and nothing else is added that depends on it`, async t => {
+    const root = await temp(t);
+    await write(root, 'index.html', '<h1>Hi</h1>');
+    await write(root, 'vercel.json', JSON.stringify({ trailingSlash: value }));
+    const result = await run(root);
+    const settings = await readJson(root, 'vercel.json');
+    assert.equal(settings.trailingSlash, value);
+    // A redirect to the slash form would loop with trailingSlash: false, and a rewrite is pointless next to either.
+    assert.equal(settings.rewrites, undefined);
+    assert.equal(settings.redirects, undefined);
+    assert.match(result.stdout, new RegExp(`"trailingSlash": ${value}\\. It redirects paths under /afterimage/`));
+    assert.match(result.stdout, /the history will not open/);
+    const again = await run(root);
+    assert.match(again.stdout, /^No files changed\. Still left for you:$/m);
+    assert.match(again.stdout, /"trailingSlash"/);
+  });
+}
+
+test('rewrites and redirects that are not a list are left alone and the rest is still set', async t => {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
-  await write(root, 'vercel.json', JSON.stringify({ rewrites: 'nope' }));
+  await write(root, 'vercel.json', JSON.stringify({ rewrites: 'nope', redirects: { a: 1 } }));
   const result = await run(root);
   const settings = await readJson(root, 'vercel.json');
   assert.equal(settings.rewrites, 'nope');
-  assert.equal(settings.framework, null);
+  assert.deepEqual(settings.redirects, { a: 1 });
+  assert.equal(settings.buildCommand, hostBuild);
   assert.match(result.stdout, /"rewrites" is not a list/);
-  assert.match(result.stdout, /^Updated vercel\.json \(set framework, buildCommand, outputDirectory\)$/m);
+  assert.match(result.stdout, /"redirects" is not a list/);
+  assert.match(result.stdout, /^Updated vercel\.json \(set buildCommand, outputDirectory\)$/m);
 });
 
-test('a named framework is switched to none only after the user says yes', async t => {
+const frameworkQuestion = "vercel.json uses the nextjs framework preset, which can serve its own build instead of the history. Switch to Afterimage's settings? (y/N)";
+
+test('a named framework in a Next.js project is switched to none only after the user says yes', async t => {
   const root = await temp(t);
-  await write(root, 'index.html', '<h1>Hi</h1>');
+  await nextProject(root);
   const original = JSON.stringify({ framework: 'nextjs', buildCommand: hostBuild, outputDirectory: hostOutput }, null, 2) + '\n';
   await write(root, 'vercel.json', original);
 
   const declined = await run(root, [], { answers: ['n'] });
-  assert.deepEqual(declined.questions, ["vercel.json uses the nextjs framework preset, which can serve its own build instead of the history. Switch to Afterimage's settings? (y/N)"]);
+  assert.deepEqual(declined.questions, [frameworkQuestion]);
   assert.equal(await read(root, 'vercel.json'), original);
   assert.ok(declined.stdout.includes('"framework": null'));
 
   const agreed = await run(root, [], { answers: ['y'] });
   assert.equal(agreed.questions.length, 1);
-  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite] });
-  assert.match(agreed.stdout, /^Updated vercel\.json \(set framework, rewrites\)$/m);
+  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
+  assert.match(agreed.stdout, /^Updated vercel\.json \(set framework, rewrites, redirects\)$/m);
+});
+
+test('a named framework is left alone without a TTY, and the printed values say what to set and what to add', async t => {
+  const root = await temp(t);
+  await nextProject(root);
+  const original = JSON.stringify({ framework: 'nextjs', buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [{ source: '/old', destination: '/new' }] }) + '\n';
+  await write(root, 'vercel.json', original);
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await read(root, 'vercel.json'), original);
+  assert.match(result.stdout, /Left vercel\.json as it is/);
+  assert.ok(result.stdout.includes('"framework": null'));
+  // Pasting must never replace the project's own rules, so lists are asked to be added to.
+  assert.match(result.stdout, /and add this to "rewrites", keeping the rules already there:\n\{\n {2}"source": "\/:path/);
+  assert.match(result.stdout, /and add this to "redirects", keeping the rules already there:\n\{\n {2}"source": "\/afterimage"/);
+  assert.doesNotMatch(result.stdout, /set:\n[^]*"rewrites": \[/);
+  assert.doesNotMatch(result.stdout, /already set up/);
 });
 
 test('a named framework next to a different build is one question about both', async t => {
   const root = await temp(t);
-  await write(root, 'index.html', '<h1>Hi</h1>');
+  await nextProject(root);
   await write(root, 'vercel.json', JSON.stringify({ framework: 'nextjs', buildCommand: 'npm run build', outputDirectory: 'out' }));
   const result = await run(root, [], { answers: ['n'] });
   assert.deepEqual(result.questions, ["vercel.json builds with npm run build, serves out, uses the nextjs framework preset, which can serve its own build instead of the history. Switch to Afterimage's settings? (y/N)"]);
@@ -261,8 +350,7 @@ test('netlify.toml of other projects has no Next.js setting', async t => {
 
 test('an existing netlify.toml of a Next.js project is told about the runtime setting, and is quiet once it has it', async t => {
   const root = await temp(t);
-  await write(root, 'package.json', JSON.stringify({ dependencies: { next: '15.0.0' } }));
-  await write(root, 'next.config.mjs', "export default { output: 'export' };\n");
+  await nextProject(root);
   const original = `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`;
   await write(root, 'netlify.toml', original);
   const result = await run(root);
@@ -272,6 +360,22 @@ test('an existing netlify.toml of a Next.js project is told about the runtime se
 
   await write(root, 'netlify.toml', `${original}\n[build.environment]\n  NETLIFY_NEXT_PLUGIN_SKIP = "true"\n`);
   assert.doesNotMatch((await run(root)).stdout, /netlify/);
+});
+
+test('Astro with the Vercel adapter has no static build unless the config says output: static', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ dependencies: { astro: '5.0.0', '@astrojs/vercel': '8.0.0' } }));
+  await write(root, 'astro.config.mjs', "import vercel from '@astrojs/vercel';\nexport default { output: 'server', adapter: vercel() };\n");
+  const before = await snapshot(root);
+  const result = await run(root);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /@astrojs\/vercel, a server adapter/);
+  assert.match(result.stderr, /output: 'static' in the astro config/);
+  assert.deepEqual(await snapshot(root), before);
+
+  await write(root, 'astro.config.mjs', "import vercel from '@astrojs/vercel';\nexport default { output: 'static', adapter: vercel() };\n");
+  assert.equal((await run(root)).code, 0);
+  assert.equal((await readConfig(root)).source, 'dist');
 });
 
 test('an existing vercel.json keeps its other keys', async t => {
@@ -284,13 +388,13 @@ test('an existing vercel.json keeps its other keys', async t => {
   assert.deepEqual(JSON.parse(text), {
     cleanUrls: true,
     headers: [{ source: '/(.*)', headers: [] }],
-    framework: null,
     buildCommand: hostBuild,
-    outputDirectory: hostOutput
+    outputDirectory: hostOutput,
+    redirects: [slashRedirect]
   });
   assert.ok(text.endsWith('}\n'));
   assert.match(text, /^ {2}"cleanUrls"/m, 'writes 2-space JSON');
-  assert.match(result.stdout, /^Updated vercel\.json \(set framework, buildCommand, outputDirectory\)$/m);
+  assert.match(result.stdout, /^Updated vercel\.json \(set buildCommand, outputDirectory, redirects\)$/m);
 });
 
 test('a different vercel.json build is switched only after the user says yes', async t => {
@@ -306,7 +410,7 @@ test('a different vercel.json build is switched only after the user says yes', a
 
   const agreed = await run(root, [], { answers: ['y'] });
   assert.equal(agreed.questions.length, 1);
-  assert.deepEqual(await readJson(root, 'vercel.json'), { buildCommand: hostBuild, outputDirectory: hostOutput, framework: null, rewrites: [cleanUrlRewrite] });
+  assert.deepEqual(await readJson(root, 'vercel.json'), { buildCommand: hostBuild, outputDirectory: hostOutput, framework: null, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
   assert.match(agreed.stdout, /^Updated vercel\.json/m);
 });
 
@@ -593,7 +697,7 @@ test('a byte order mark in vercel.json is read and kept', async t => {
   assert.equal(result.code, 0, result.stderr);
   const text = await read(root, 'vercel.json');
   assert.ok(text.startsWith('﻿{'));
-  assert.deepEqual(JSON.parse(text.slice(1)), { cleanUrls: true, framework: null, buildCommand: hostBuild, outputDirectory: hostOutput });
+  assert.deepEqual(JSON.parse(text.slice(1)), { cleanUrls: true, buildCommand: hostBuild, outputDirectory: hostOutput, redirects: [slashRedirect] });
 });
 
 test('a CRLF package.json keeps its line endings and a second run changes nothing', async t => {

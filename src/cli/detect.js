@@ -66,7 +66,17 @@ export async function detectProject(projectDir) {
     const pages = config?.match(/\bpages\s*:\s*['"`]([^'"`]+)['"`]/)?.[1] ?? 'build';
     return found('sveltekit-static', pages, 'npm run build', `Found SvelteKit with adapter-static; it builds to ${pages}/.`);
   }
-  if (has('astro')) return found('astro', 'dist', 'npm run build', 'Found astro in package.json; it builds to dist/.');
+  if (has('astro')) {
+    // @astrojs/vercel is a server adapter: its build is Vercel's own output (.vercel/output), not a dist/ of plain files.
+    // Only a config that says output: 'static' puts it back to static files.
+    if (has('@astrojs/vercel')) {
+      const config = await readFirst(projectDir, ['astro.config.mjs', 'astro.config.js', 'astro.config.cjs', 'astro.config.ts', 'astro.config.mts']);
+      if (config === null || !/\boutput\s*:\s*['"`]static['"`]/.test(config)) {
+        return found('astro-server', null, null, "Found astro with @astrojs/vercel, a server adapter, without output: 'static' in the astro config, so it has no static build to save.");
+      }
+    }
+    return found('astro', 'dist', 'npm run build', 'Found astro in package.json; it builds to dist/.');
+  }
   if (has('vite')) return found('vite', 'dist', 'npm run build', 'Found vite in package.json; it builds to dist/.');
   return unknown('Found a package.json, but no framework Afterimage recognises (vite, next, astro or SvelteKit).');
 }

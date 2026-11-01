@@ -38,7 +38,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { readConfig } from '../../src/cli/config.js';
 import { cleanUrlRewrite } from '../../src/cli/commands/init.js';
-import { fileFor, requestPath, sendFile } from '../../src/cli/static-files.js';
+import { fileFor, requestPath, sendFile, TYPES } from '../../src/cli/static-files.js';
 import { entryPath } from '../../src/viewer/frames.js';
 import { isServedPath } from '../../src/runtime/map.js';
 
@@ -85,8 +85,6 @@ async function serve(root) {
   };
 }
 
-const plainTypes = { html: 'text/html; charset=utf-8', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css', json: 'application/json', txt: 'text/plain; charset=utf-8', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', ico: 'image/x-icon', woff2: 'font/woff2', map: 'application/json' };
-
 // The rewrite init writes to vercel.json, as a test on the path. "/:path(<pattern>)" is the one source shape init uses,
 // so only that shape is understood here.
 function rewriteTest({ source, destination }) {
@@ -96,28 +94,42 @@ function rewriteTest({ source, destination }) {
   return pathname => expression.test(pathname);
 }
 
-// A copy of `site` in a fresh folder, served the way Vercel and Netlify serve static output, with nothing of Afterimage's
-// own in the way: a path maps straight to a file (/x/ to x/index.html, /x to x and nothing else), a miss is a 404 with the
-// site's own 404.html, and there is no SPA fallback and no special route. The folder name has a space and the port is
-// whichever is free, so nothing may rely on where it lives. Unlike serve(), it never sees the checkout it was built in.
+// A copy of `site` in a fresh folder, served by a host with nothing of Afterimage's in the way: a path maps straight to
+// a file (/x/ to x/index.html, /x to x and nothing else), a miss is a 404 with the site's own 404.html, and there is no
+// SPA fallback and no special route. The one thing it adds is the slash: a path that names a folder (x/index.html, and no
+// file x) is redirected to /x/ with a 301, as Netlify does. Vercel answers /x with the folder's page and a 200 instead;
+// for /afterimage init writes a redirect to the slash form (slashRedirect), which this stands in for there too. The
+// folder name has a space and the port is whichever is free, so nothing may rely on where it lives. Unlike serve(), it
+// never sees the checkout it was built in.
 // cleanUrls says how the host treats clean URLs:
 //   'none' (the default)  nothing: /about is a 404 when only about.html exists.
 //   'rewrite'             what init writes to vercel.json: a path with no file of its name is answered from <path>.html
-//                         when that exists, except under /afterimage/. Nothing is redirected.
+//                         when that exists, except under /afterimage/. Nothing else is redirected.
 //   'redirect'            Vercel's cleanUrls: true: /x.html goes to /x and /dir/index.html to /dir with a 308 (the form
 //                         that leaves the trailing slash off, which is the harder one for the runtime), and /x is
 //                         answered from x.html or x/index.html. It covers /afterimage/ too, as the setting is site-wide.
-// Returns { origin, root, take, close } like serve().
+// Returns { origin, root, take, redirected, close } like serve(); redirected() lists what the host redirected.
 async function servePlain(site, { cleanUrls = 'none' } = {}) {
   const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage e2e host-'));
   const root = path.join(parent, 'site root');
-  await fs.cp(site, root, { recursive: true });
+  const removeCopy = () => fs.rm(parent, { recursive: true, force: true });
+  try {
+    await fs.cp(site, root, { recursive: true });
+  } catch (error) {
+    await removeCopy();
+    throw error;
+  }
   const rewrites = cleanUrls === 'rewrite' ? rewriteTest(cleanUrlRewrite) : () => false;
   let seen = [];
+  const redirects = [];
   const send = async (res, method, file, status = 200) => {
     const data = await fs.readFile(file);
-    res.writeHead(status, { 'Content-Type': plainTypes[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': data.length });
+    res.writeHead(status, { 'Content-Type': TYPES[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': data.length });
     res.end(method === 'HEAD' ? undefined : data);
+  };
+  const redirect = (res, status, from, to) => {
+    redirects.push(`${status} ${from} -> ${to}`);
+    res.writeHead(status, { Location: to }).end();
   };
   // The file a path names, and no other: a path that ends in / names the folder's index.html.
   const find = async pathname => {
@@ -128,25 +140,32 @@ async function servePlain(site, { cleanUrls = 'none' } = {}) {
     const pathname = requestPath(req.url);
     if (pathname === null) { res.writeHead(400).end(); return; }
     if (pathname !== '/favicon.ico') seen.push(pathname);
+    const search = new URL(req.url, 'http://localhost').search;
     if (cleanUrls === 'redirect' && pathname.endsWith('.html') && await find(pathname)) {
       const clean = pathname === '/index.html' || pathname.endsWith('/index.html') ? pathname.slice(0, -'/index.html'.length) || '/' : pathname.slice(0, -'.html'.length);
-      res.writeHead(308, { Location: clean + new URL(req.url, 'http://localhost').search }).end();
+      redirect(res, 308, pathname, clean + search);
       return;
     }
     let file = await find(pathname);
     if (!file && !pathname.endsWith('/')) {
       if (cleanUrls === 'redirect') file = await find(`${pathname}.html`) ?? await find(`${pathname}/`);
       else if (rewrites(pathname)) file = await find(`${pathname}.html`);
+      if (!file && await find(`${pathname}/`)) { redirect(res, 301, pathname, `${pathname}/${search}`); return; }
     }
     if (file) { await send(res, req.method, file); return; }
     const missing = await find('/404.html');
     if (missing) await send(res, req.method, missing, 404);
     else res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    await removeCopy();
+    throw error;
+  }
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
     root,
@@ -155,9 +174,10 @@ async function servePlain(site, { cleanUrls = 'none' } = {}) {
       seen = [];
       return taken;
     },
+    redirected: () => [...redirects],
     close: async () => {
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-      await fs.rm(parent, { recursive: true, force: true });
+      await removeCopy();
     }
   };
 }
@@ -437,6 +457,11 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     report.changes = { from: previous.id, to: newest.id, count, rows: rows.map(row => row.text) };
 
     return report;
+  } catch (error) {
+    // What the plain host redirected is often the whole story of a frame that never settled.
+    const redirected = server.redirected?.() ?? [];
+    if (redirected.length) error.message += `\nThe host redirected:\n${redirected.join('\n')}`;
+    throw error;
   } finally {
     await browser?.close();
     await server.close();

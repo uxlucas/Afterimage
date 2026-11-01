@@ -83,6 +83,28 @@ test('astro builds to dist', async t => {
   await detect(t, { 'package.json': pkg({ astro: '^5.0.0' }), 'astro.config.mjs': 'export default {};' }, { type: 'astro', source: 'dist', build: 'npm run build' });
 });
 
+// @astrojs/vercel writes Vercel's own output (.vercel/output), so it is a server project unless the config says static.
+for (const [title, config] of [
+  ['without a config file', null],
+  ['with output: server', "import vercel from '@astrojs/vercel';\nexport default { output: 'server', adapter: vercel() };\n"],
+  ['with no output set', "import vercel from '@astrojs/vercel';\nexport default { adapter: vercel() };\n"]
+]) {
+  test(`astro with @astrojs/vercel ${title} is astro-server, with a reason naming the adapter and output: 'static'`, async t => {
+    const files = { 'package.json': pkg({ astro: '^5.0.0', '@astrojs/vercel': '^8.0.0' }) };
+    if (config) files['astro.config.mjs'] = config;
+    const found = await detect(t, files, { type: 'astro-server', source: null, build: null });
+    assert.match(found.reason, /@astrojs\/vercel/);
+    assert.match(found.reason, /output: 'static'/);
+  });
+}
+
+test('astro with @astrojs/vercel and output: static builds to dist', async t => {
+  await detect(t, {
+    'package.json': pkg({ astro: '^5.0.0', '@astrojs/vercel': '^8.0.0' }),
+    'astro.config.ts': "import vercel from '@astrojs/vercel';\nexport default defineConfig({ output: \"static\", adapter: vercel() });\n"
+  }, { type: 'astro', source: 'dist', build: 'npm run build' });
+});
+
 test('sveltekit with adapter-static defaults to build', async t => {
   await detect(t, {
     'package.json': pkg({}, { '@sveltejs/kit': '^2.0.0', '@sveltejs/adapter-static': '^3.0.0', vite: '^7.0.0' }),
