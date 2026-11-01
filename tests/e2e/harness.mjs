@@ -397,19 +397,29 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     await page.evaluate(() => { document.querySelector('iframe[data-role="target"]').contentWindow.__beforeBack = true; });
     // Only the frame navigating would leave the viewer page in place, and goBack waiting for it in vain.
     await page.goBack({ waitUntil: 'load', timeout: loadTimeout }).catch(() => {});
+    // Back usually loads the viewer page again, and its new frame sits on the browser's initial about:blank (complete,
+    // with no mark) until its first page commits. That is not where Back left the frame, so wait for a loaded page.
+    const backFrame = () => page.evaluate(() => {
+      try {
+        const win = document.querySelector('iframe[data-role="target"]')?.contentWindow;
+        if (!win) return null;
+        return { before: Boolean(win.__beforeBack), ready: win.document.readyState, mark: win.__afterimageVersion ?? null, path: win.location.pathname, href: win.location.href };
+      } catch {
+        return null;
+      }
+    });
     await page.waitForFunction(() => {
       try {
         const win = document.querySelector('iframe[data-role="target"]')?.contentWindow;
-        return Boolean(win && !win.__beforeBack && win.document.readyState === 'complete');
+        return Boolean(win && !win.__beforeBack && win.location.href !== 'about:blank' && win.document.readyState === 'complete');
       } catch {
         return false;
       }
-    }, null, { timeout: loadTimeout });
-    const back = await page.evaluate(() => {
-      const win = document.querySelector('iframe[data-role="target"]').contentWindow;
-      return { mark: win.__afterimageVersion ?? null, path: win.location.pathname, href: win.location.href };
+    }, null, { timeout: loadTimeout }).catch(async () => {
+      assert.fail(`After switching versions and pressing Back the frame never loaded a page: ${JSON.stringify(await backFrame())}`);
     });
-    assert.ok(back.mark !== null || back.path.startsWith('/afterimage/'), `After switching versions and pressing Back the frame shows ${back.href}, the live app`);
+    const back = await backFrame();
+    assert.ok(back && (back.mark !== null || back.path.startsWith('/afterimage/')), `After switching versions and pressing Back the frame shows ${back?.href ?? 'a page it cannot read'}, the live app`);
     noFailures('Back after switching versions');
 
     // The worker the viewer registered never takes over the app at the root.
