@@ -1,6 +1,6 @@
 # Commands
 
-Run every command from the project root, where `afterimage.config.json` is. With Afterimage installed in the project, `npx afterimage` runs it, and so do the package scripts `npm run afterimage:save`, `npm run afterimage:dev` and `npm run afterimage:build` that init adds.
+Run every command from the project root, where `afterimage.config.json` is. With Afterimage installed in the project, `npx afterimage` runs it, and so do the package scripts `npm run afterimage:save`, `npm run afterimage:dev` and `npm run afterimage:build` that init adds. Through a package script, the name and every flag go after `--`, as in `npm run afterimage:save -- "Name" --note "..."`, or npm takes the flags as its own and drops them.
 
 ```text
 afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]
