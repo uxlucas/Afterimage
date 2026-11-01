@@ -45,6 +45,12 @@ The end-to-end tests. Before they run, `pretest:e2e` builds the viewer and runs 
 
 Judge a run by its exit code, not by filtered output: a run that prints passing tests can still have a failing one.
 
+```bash
+npm run try:package
+```
+
+Packs the package and checks the tarball in two fresh projects, a Vite + React app and a plain HTML folder: install it, `afterimage init`, save twice, build, then the same browser check. It installs from the npm registry, so it needs a network; it is not part of `npm test`, and takes a few minutes.
+
 ## Examples
 
 Each example in `examples/` is a real project with its own `package.json`. It depends on `afterimage-cli` through `file:../..`, so it runs this checkout's CLI and viewer.
