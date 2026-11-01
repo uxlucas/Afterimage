@@ -72,10 +72,19 @@ const checks = {
   }
 };
 
-// The root is the app's own build, byte for byte: nothing Afterimage adds reaches it.
+// Every file under a folder with its bytes, by forward-slash path.
+async function filesIn(directory) {
+  const entries = await fs.readdir(directory, { recursive: true, withFileTypes: true });
+  const files = entries.filter(entry => entry.isFile()).map(entry => path.relative(directory, path.join(entry.parentPath, entry.name)).replaceAll('\\', '/'));
+  return Object.fromEntries(await Promise.all(files.sort().map(async name => [name, (await fs.readFile(path.join(directory, name))).toString('base64')])));
+}
+
+// The root is the app's own build, byte for byte and file for file: only Afterimage's own /afterimage/ is added.
 async function assertRootUntouched(dir, built) {
-  const site = path.join(dir, '.afterimage/site');
-  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, built, 'index.html')));
+  const site = await filesIn(path.join(dir, '.afterimage/site'));
+  const app = await filesIn(path.join(dir, built));
+  assert.ok(Object.keys(app).length > 1, `${built} holds the app's build`);
+  assert.deepEqual(Object.fromEntries(Object.entries(site).filter(([name]) => !name.startsWith('afterimage/'))), app);
 }
 
 test('northwind: every version renders and v3 shows its changes', async () => {

@@ -6,12 +6,16 @@ export const configName = 'afterimage.config.json';
 const defaults = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'unknown' };
 
 // Names that are the project's own files, not the prototype. They only matter when the prototype is the project root.
-// The host configs are the ones init writes; a plain folder set up by init must still save.
-const projectNames = ['node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName, 'vercel.json', 'netlify.toml'];
-// And the project's own docs next to them: a README, a LICENSE and an agent's instructions (CLAUDE.md, AGENTS.md), as
-// files, in any case, bare or with a text extension. Left in, a .md one would stop every save. A page or a folder with
-// one of these names (license.html, agents/) can be part of the prototype, so it stays.
-const projectDoc = /^(readme|license|claude|agents)(\.(md|markdown|txt|rst))?$/i;
+// The host configs are the ones init writes, and the lockfiles are every package manager's.
+const projectNames = [
+  'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName, 'vercel.json', 'netlify.toml',
+  'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'
+];
+// And the project's own docs next to them: a README, a LICENSE, a CHANGELOG, a CONTRIBUTING guide and an agent's
+// instructions (CLAUDE.md, AGENTS.md, GEMINI.md), as files, in any case, bare or with a text extension. Left in, they
+// would be saved into every version and published at the live root. A page or a folder with one of these names
+// (license.html, agents/) can be part of the prototype, so it stays.
+const projectDoc = /^(readme|license|changelog|contributing|claude|agents|gemini)(\.(md|markdown|txt|rst))?$/i;
 
 // Same shape readSnapshot expects: forward slashes, no leading ./, no trailing slash. "x/../site" is "site" and "src/.." is ".".
 const cleanPath = value => {

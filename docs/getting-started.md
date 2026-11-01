@@ -58,7 +58,7 @@ Nothing is written until every step has worked, so a mistake leaves the project 
 npx afterimage save "First version"
 ```
 
-A save runs the build first, when the config has one, and stores the result as the next version: `afterimage/versions/v1/`, listed in `afterimage/versions.json`. Add notes with `--note`, as many as you like:
+A save runs the build first, when the config has one, and stores the result as the next version: `afterimage/versions/v1/`, listed in `afterimage/versions.json`. It keeps every file in the folder, whatever its type, except source maps and hidden files; [commands.md](commands.md#what-a-save-keeps) has the rules. Add notes with `--note`, as many as you like:
 
 ```bash
 npx afterimage save "Remember me" --note "Keeps people signed in for 30 days." --note "Checkbox is on by default."

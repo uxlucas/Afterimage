@@ -68,11 +68,11 @@ Builds the prototype and saves it as the next version.
 A save copies the prototype folder with these rules:
 
 - `index.html` must be at its top.
-- Files with these extensions are kept: `.html` `.css` `.js` `.mjs` `.json` `.svg` `.png` `.jpg` `.jpeg` `.webp` `.gif` `.avif` `.ico` `.woff` `.woff2` `.ttf` `.otf` `.mp4` `.webm` `.mp3` `.wav` `.ogg` `.wasm` `.txt` `.webmanifest` `.xml` `.pdf`.
-- Any other file stops the save with its name. Add it to `exclude` in the config if it isn't part of the prototype.
+- Every other file is kept, whatever its type, including files with no extension such as `_redirects` and `_headers`.
 - Source maps (`.map`), hidden files and folders (names starting with `.`) and operating-system clutter (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`) are skipped.
+- Anything listed in `exclude` in the config is left out.
 - A symbolic link stops the save. Remove it, or add it to `exclude`.
-- When the prototype is the project root, the project's own files stay out: `node_modules`, `afterimage`, `.afterimage`, `package.json`, `package-lock.json`, `afterimage.config.json`, `vercel.json`, `netlify.toml`, and a top-level README, LICENSE, CLAUDE or AGENTS file, bare or ending in `.md`, `.markdown`, `.txt` or `.rst`.
+- When the prototype is the project root, the project's own files stay out: `node_modules`, `afterimage`, `.afterimage`, `package.json`, `afterimage.config.json`, `vercel.json`, `netlify.toml`, the lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`), and a top-level README, LICENSE, CHANGELOG, CONTRIBUTING, CLAUDE, AGENTS or GEMINI file, bare or ending in `.md`, `.markdown`, `.txt` or `.rst`.
 
 Each saved HTML page gets one tag added at the start of its `<head>`, `<script src="/afterimage/frame.js" data-afterimage-version="v4">`, which lets a built app load inside the viewer. Nothing else in the files changes.
 
@@ -104,7 +104,9 @@ npx afterimage build
 Builds the prototype and writes the deployable site with the history at `/afterimage/`. It takes no flags besides `--help`.
 
 - It checks every saved version against its fingerprint, then runs the build command when the config has one.
-- It writes `.afterimage/site/`: the prototype at the root, with the same files a save would keep, and under `afterimage/` the viewer, `versions.json`, every saved version and the frame runtime (`sw.js` and `frame.js`).
+- It writes `.afterimage/site/`: the prototype at the root, and under `afterimage/` the viewer, `versions.json`, every saved version and the frame runtime (`sw.js` and `frame.js`).
+- The root is your app's output exactly as its own build makes it, source maps, hidden files such as `.well-known/` and host files such as `_redirects` included. Only `exclude`, a `.git` or `node_modules` folder and operating-system clutter are left out.
+- When the prototype is the project root (a plain folder), the project's own files stay out as they do for a save, and so do its hidden files and folders (`.env`, `.gitignore`, `.vscode/`), except `.well-known/`.
 - It stops if the app has its own top-level `afterimage` file or folder, since the history is served there.
 - The previous site stays in place until the new one is complete, so a failed build leaves it as it was.
 - With no saved versions it stops with `Save a first version with: afterimage save "Name"`.

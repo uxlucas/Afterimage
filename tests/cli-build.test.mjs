@@ -226,6 +226,45 @@ test('with the prototype at the project root the project files stay out of the s
   assert.deepEqual((await fs.readdir(path.join(root, '.afterimage/site'))).sort(), ['afterimage', 'index.html']);
 });
 
+// What the app's own build ships reaches the live root as it is, even what a save leaves out of a version.
+const served = name => name === 'afterimage' || name.startsWith('afterimage/');
+
+test('a built app reaches the root byte for byte: host files, .well-known, source maps and any file type', async t => {
+  const dirs = await fixtures(t);
+  const root = await twoVersions(t);
+  const shipped = {
+    '_redirects': '/*  /index.html  200\n', '.well-known/security.txt': 'Contact: mailto:a@b.c\r\n',
+    'assets/app.js.map': '{"version":3}', 'model.glb': Buffer.from([0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00, 0xff])
+  };
+  for (const [name, bytes] of Object.entries(shipped)) {
+    await fs.mkdir(path.dirname(path.join(root, 'dist', name)), { recursive: true });
+    await fs.writeFile(path.join(root, 'dist', name), bytes);
+  }
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  const site = await tree(path.join(root, '.afterimage/site'));
+  const app = await tree(path.join(root, 'dist'));
+  assert.deepEqual(Object.fromEntries(Object.entries(site).filter(([name]) => !served(name))), app);
+  for (const name of Object.keys(shipped)) assert.ok(name in site, name);
+});
+
+test('a plain folder at the project root keeps its hidden files off the site, except .well-known', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t, configWith(null, { source: '.' }));
+  await fs.rm(path.join(root, 'page.txt'));
+  const files = { 'index.html': '<h1>Root app</h1>', '.env': 'SECRET=1', '.gitignore': 'x', '.vscode/settings.json': '{}', '.well-known/x': 'proof', 'app.js.map': '{}' };
+  for (const [name, text] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.writeFile(path.join(root, name), text);
+  }
+  assert.equal((await run(root, ['save', 'Only version'])).code, 0);
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  const site = path.join(root, '.afterimage/site');
+  assert.deepEqual((await listing(site)).filter(name => !served(name)), ['.well-known', '.well-known/x', 'app.js.map', 'index.html']);
+  assert.equal(await fs.readFile(path.join(site, '.well-known/x'), 'utf8'), 'proof');
+});
+
 test('assembleSite without the app writes only the afterimage folder and ignores the app', async t => {
   const dirs = await fixtures(t);
   // The build would fail and the app has its own afterimage folder: neither matters without the app.

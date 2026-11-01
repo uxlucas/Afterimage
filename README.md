@@ -64,6 +64,7 @@ On Vercel and Netlify you don't run it yourself. The `vercel.json` and `netlify.
 - The site has to be served from the root of its domain, since the history is always at `/afterimage/`. A site under a sub-path, such as a GitHub Pages project site, doesn't work.
 - Versions load through a service worker, so the history needs https, or localhost while you work. Without one, plain HTML with relative paths still shows, but a built app inside the viewer can show up unstyled or on its own not-found page.
 - Every saved version is public. Each one deploys with your site, and there is no command to take one back, so save only what you'd show.
+- A version keeps every file of the prototype except source maps and hidden files (names starting with `.`). The live app at the root keeps every file its build wrote.
 - An old version's code runs on your live site's address, so it can read and change the cookies and storage your live app uses.
 - A few ways of leaving a page inside a version open the live app instead, such as reloading the frame from the browser's menu or a link that opens a new tab.
 - The viewer has been tested in Chrome only so far. Firefox and Safari haven't been tested yet.

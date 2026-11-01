@@ -79,12 +79,14 @@ test('an exclude matches a file or a whole folder, by path segment', async t => 
   assert.deepEqual([...(await readSnapshot(root, { exclude: ['docs/a.txt', 'src/docs/'] })).keys()], ['docs-extra/b.txt', 'docs.txt', 'index.html']);
 });
 
-test('build output extras are skipped, unknown types fail by name', async t => {
+test('a save keeps every file type, extensionless ones included, and skips source maps and hidden files', async t => {
   const root = await temp(t);
-  await write(root, { 'index.html': 'i', 'app.js.map': '{}', '.nojekyll': '', 'site.webmanifest': '{}', 'sitemap.xml': '<x/>', 'doc.pdf': 'pdf' });
-  assert.deepEqual([...(await readSnapshot(root)).keys()], ['doc.pdf', 'index.html', 'site.webmanifest', 'sitemap.xml']);
-  await write(root, { 'data.parquet': 'p' });
-  await assert.rejects(readSnapshot(root), error => error.message.includes('data.parquet') && error.message.includes('exclude'));
+  const kept = ['_headers', '_redirects', 'captions.vtt', 'data.csv', 'data.parquet', 'doc.pdf', 'index.html', 'model.glb', 'notes.md', 'scene.riv', 'site.webmanifest', 'sitemap.xml', 'spin.lottie'];
+  await write(root, Object.fromEntries(kept.map(name => [name, name])));
+  await write(root, { 'app.js.map': '{}', '.nojekyll': '', '.well-known/security.txt': 'x', 'assets/.env': 'SECRET=1' });
+  const files = await readSnapshot(root);
+  assert.deepEqual([...files.keys()], kept);
+  for (const name of kept) assert.equal(files.get(name).toString(), name);
   assert.equal((await readSnapshot(root, { exclude: ['data.parquet'] })).has('data.parquet'), false);
 });
 
@@ -158,13 +160,10 @@ test('Invalid source and invalid arguments leave the history untouched', async t
   const before = await readHistory(historyDir);
   await assert.rejects(saveVersion(options, { name: '' }), /version name/);
   await assert.rejects(saveVersion(options, { name: 'Bad note', notes: [''] }), /version name/);
-  await write(sourceDir, { 'data.parquet': 'p' });
-  await assert.rejects(saveVersion(options, { name: 'Must fail' }), /data\.parquet/);
-  assert.deepEqual(await readHistory(historyDir), before);
-  assert.deepEqual(await leftovers(historyDir), []);
-  await fs.unlink(path.join(sourceDir, 'data.parquet'));
   await fs.unlink(path.join(sourceDir, 'index.html'));
   await assert.rejects(saveVersion(options, { name: 'Must fail' }), /Missing index.html/);
+  assert.deepEqual(await readHistory(historyDir), before);
+  assert.deepEqual(await leftovers(historyDir), []);
 });
 
 test('Hidden files are skipped instead of saved, and links still fail', async t => {

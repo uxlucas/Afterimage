@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sourceExcludes } from './config.js';
-import { readSnapshot, verifyHistory } from './history.js';
+import { readApp, verifyHistory } from './history.js';
 import { runBuild } from './run-build.js';
 
 // The package's own viewer and runtime, found from this file so they work from node_modules and from a checkout.
@@ -102,8 +102,8 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     if (config.build) await runBuild(config.build, projectDir, { stdio: buildStdio, closing: 'Nothing was built.' });
     const excluded = await sourceExcludes(projectDir, config);
     await checkCollision(sourceDir, excluded);
-    // Same selection as a save, so the live root matches what a save captures.
-    app = await readSnapshot(sourceDir, { exclude: excluded });
+    // The app's output as its own build made it, not a save's selection: nothing Afterimage does may change the live root.
+    app = await readApp(sourceDir, { exclude: excluded, plain: sourceDir === path.resolve(projectDir) });
     // Case-insensitive: on Windows and macOS Afterimage/ is the same folder.
     if ([...app.keys()].some(name => name.split('/')[0].toLowerCase() === servedFolder)) throw collision();
   }

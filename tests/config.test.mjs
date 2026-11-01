@@ -61,10 +61,12 @@ test('a config with a wrongly typed field is rejected by name', async t => {
 test('project excludes cover the project-level names, the configured folders and config.exclude, once each', () => {
   const base = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: ['cache', 'node_modules'], type: 'plain' };
   assert.deepEqual(projectExcludes(base), [
-    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml', '.afterimage/site', 'cache'
+    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml',
+    'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', '.afterimage/site', 'cache'
   ]);
   assert.deepEqual(projectExcludes({ ...base, history: 'versions-here/', out: './site-out' }), [
-    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml', 'versions-here', 'site-out', 'cache'
+    'node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', 'afterimage.config.json', 'vercel.json', 'netlify.toml',
+    'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'versions-here', 'site-out', 'cache'
   ]);
 });
 
@@ -97,10 +99,11 @@ test('a path that is absolute or leaves the project is rejected by field name', 
 const rootConfig = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'plain' };
 
 test('a prototype at the project root leaves out the project\'s own docs, by name and doc extension, in any case', () => {
-  const files = ['README.md', 'readme.txt', 'Readme.markdown', 'README.rst', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md', 'index.html', 'license.html', 'agents.html', 'readme.js', 'readme-assets', 'READMEs.md', 'notes.md'];
-  const excluded = projectExcludes(rootConfig, files);
-  for (const name of ['README.md', 'readme.txt', 'Readme.markdown', 'README.rst', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md']) assert.ok(excluded.includes(name), name);
-  for (const name of ['index.html', 'license.html', 'agents.html', 'readme.js', 'readme-assets', 'READMEs.md', 'notes.md']) assert.ok(!excluded.includes(name), name);
+  const docs = ['README.md', 'readme.txt', 'Readme.markdown', 'README.rst', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'CHANGELOG.md', 'changelog', 'CONTRIBUTING.md'];
+  const pages = ['index.html', 'license.html', 'agents.html', 'changelog.html', 'readme.js', 'readme-assets', 'READMEs.md', 'notes.md'];
+  const excluded = projectExcludes(rootConfig, [...docs, ...pages]);
+  for (const name of docs) assert.ok(excluded.includes(name), name);
+  for (const name of pages) assert.ok(!excluded.includes(name), name);
   // A build folder is the prototype itself, so its files are its own.
   assert.deepEqual(projectExcludes({ ...rootConfig, source: 'dist' }, ['README.md']), []);
 });

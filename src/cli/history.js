@@ -4,10 +4,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { validateManifest } from '../engine/manifest.js';
 import { injectFrameScript } from '../runtime/map.js';
 
-const publicExtensions = new Set(['.html', '.css', '.js', '.mjs', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf', '.mp4', '.webm', '.mp3', '.wav', '.ogg', '.wasm', '.txt', '.webmanifest', '.xml', '.pdf']);
-// Source maps are build output nobody browses in a saved version, so they are left out instead of failing the save.
-const skippedExtensions = new Set(['.map']);
-
 // Finder, Explorer and macOS file copies leave these in any folder they touch. They are never part of a
 // prototype, so they are skipped rather than saved or treated as an error.
 export const isSystemFile = name => ['.DS_Store', 'Thumbs.db', 'desktop.ini'].includes(name) || name.startsWith('._');
@@ -16,9 +12,9 @@ export const isSystemFile = name => ['.DS_Store', 'Thumbs.db', 'desktop.ini'].in
 const isExcluded = (relative, exclude) => exclude.some(entry => relative === entry || relative.startsWith(`${entry}/`));
 const cleanExclude = entry => entry.replace(/^\.\//, '').replace(/\/+$/, '');
 
-// Strict is for saved snapshots: anything save would have skipped (hidden files, source maps) means the folder was
-// edited after saving, and a deploy copying it would publish that file.
-export async function readSnapshot(directory, { exclude = [], strict = false } = {}) {
+// Every file under directory, by forward-slash path in name order, minus OS clutter, excludes and whatever
+// skip(name, entry) leaves out. skip may also throw, to refuse a file outright.
+async function readFiles(directory, exclude, skip) {
   const excluded = exclude.map(cleanExclude);
   const files = new Map();
   async function visit(relative = '') {
@@ -27,23 +23,40 @@ export async function readSnapshot(directory, { exclude = [], strict = false } =
     for (const entry of (await fs.readdir(folder, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1)) {
       const name = relative ? `${relative}/${entry.name}` : entry.name;
       // Excludes come first so a project can leave out a folder (a linked node_modules, say) without it being inspected.
-      if (isSystemFile(entry.name) || isExcluded(name, excluded)) continue;
-      if (entry.name.startsWith('.')) {
-        if (strict) throw new Error(`Unexpected hidden file in a saved version: ${name}`);
-        continue;
-      }
+      if (isSystemFile(entry.name) || isExcluded(name, excluded) || skip(name, entry)) continue;
       if (entry.isSymbolicLink()) throw new Error(`Remove the link from the public prototype, or add it to exclude: ${name}`);
-      const extension = path.extname(name).toLowerCase();
       if (entry.isDirectory()) await visit(name);
-      else if (entry.isFile() && skippedExtensions.has(extension)) {
-        if (strict) throw new Error(`Unexpected file in a saved version: ${name}`);
-      } else if (entry.isFile() && publicExtensions.has(extension)) files.set(name, await fs.readFile(path.join(directory, name)));
-      else throw new Error(`Unsupported file in the prototype: ${name}. Add it to exclude if it is not part of the prototype.`);
+      else if (entry.isFile()) files.set(name, await fs.readFile(path.join(directory, name)));
+      else throw new Error(`Not a regular file or folder: ${name}. Add it to exclude if it is not part of the prototype.`);
     }
   }
   await visit();
   if (!files.has('index.html')) throw new Error(`Missing index.html in ${directory}`);
   return files;
+}
+
+// What a saved version keeps: every file the prototype has, whatever its type, except hidden files and folders (an
+// .env, a .git) and source maps, which are build output nobody browses in a saved version.
+// Strict is for saved snapshots: anything save would have skipped means the folder was edited after saving, and a
+// deploy copying it would publish that file.
+export function readSnapshot(directory, { exclude = [], strict = false } = {}) {
+  return readFiles(directory, exclude, (name, entry) => {
+    const hidden = entry.name.startsWith('.');
+    if (!hidden && !(entry.isFile() && path.extname(name).toLowerCase() === '.map')) return false;
+    if (strict) throw new Error(`Unexpected ${hidden ? 'hidden file' : 'file'} in a saved version: ${name}`);
+    return true;
+  });
+}
+
+// What the live root gets: the app's own output as it is, source maps, dotfiles and host files (_redirects,
+// .well-known/) included, because the app's own build ships them. A repository or installed packages are never site
+// files. A plain folder (the prototype is the project root) also holds the project's hidden files (.env, .gitignore,
+// .vscode/), which must never go public, so there only .well-known/ is kept.
+export function readApp(directory, { exclude = [], plain = false } = {}) {
+  return readFiles(directory, exclude, (name, entry) => {
+    if (entry.isDirectory() && (entry.name === '.git' || entry.name === 'node_modules')) return true;
+    return plain && entry.name.startsWith('.') && name !== '.well-known';
+  });
 }
 
 export function fingerprint(files) {

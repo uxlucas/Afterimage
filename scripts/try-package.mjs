@@ -43,7 +43,10 @@ function pack(destination) {
 }
 
 // A Vite + React app as a fresh scaffold leaves it: the example's own app files, without its Afterimage history, config
-// or git rules, and without afterimage-cli in its package.json.
+// or git rules, and without afterimage-cli in its package.json. Plus two files Vite copies from public/ that prototypes
+// often ship: Netlify's extensionless SPA fallback and a 3D model.
+const viteExtras = { _redirects: '/*  /index.html  200\n', 'model.glb': Buffer.from([0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00]) };
+
 async function freshVite(dir) {
   const manifest = JSON.parse(await fs.readFile(path.join(viteExample, 'package.json'), 'utf8'));
   delete manifest.devDependencies['afterimage-cli'];
@@ -55,6 +58,17 @@ async function freshVite(dir) {
     await fs.cp(path.join(viteExample, name), path.join(dir, name), { recursive: true });
   }
   await fs.writeFile(path.join(dir, '.gitignore'), 'node_modules\ndist\n');
+  for (const [name, bytes] of Object.entries(viteExtras)) await fs.writeFile(path.join(dir, 'public', name), bytes);
+}
+
+// The extras reach the live root and both saved versions, byte for byte.
+async function checkViteExtras(dir) {
+  for (const folder of ['.afterimage/site', '.afterimage/site/afterimage/versions/v1', '.afterimage/site/afterimage/versions/v2']) {
+    for (const [name, bytes] of Object.entries(viteExtras)) {
+      const found = await fs.readFile(path.join(dir, folder, name)).catch(() => null);
+      if (!found?.equals(Buffer.from(bytes))) fail(`${folder}/${name} is ${found ? 'not the file the app ships' : 'missing'}.`);
+    }
+  }
 }
 
 async function editText(file, from, to) {
@@ -75,7 +89,8 @@ const projects = [
     create: freshVite,
     install: true,
     edit: dir => editText(path.join(dir, 'src/App.jsx'), 'Ship the prototype', 'Ship the packed prototype'),
-    check: { expectChange: 'Ship the packed prototype', follow: { link: 'About this app', shows: 'A second route' } }
+    check: { expectChange: 'Ship the packed prototype', follow: { link: 'About this app', shows: 'A second route' } },
+    verify: checkViteExtras
   },
   {
     name: 'plain HTML folder',
@@ -106,6 +121,7 @@ async function tryProject(project, tarball) {
     run('npx afterimage save "Second version"', dir, { capture: true });
     console.log('afterimage build, then the browser check');
     run('npx afterimage build', dir, { capture: true });
+    await project.verify?.(dir);
     const report = await checkExample(dir, { ...project.check, build: () => {} });
     console.log(`ok: ${report.versions.map(version => version.id).join(', ')}`);
   } finally {

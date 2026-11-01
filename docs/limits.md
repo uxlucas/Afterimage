@@ -5,9 +5,9 @@ What Afterimage doesn't do, and where a version can behave differently from the 
 ## What can be saved
 
 - **Static output only.** A version is the files a build writes, or a folder of plain HTML. Apps that render their pages on a server aren't supported: Next.js without `output: 'export'`, Astro with an adapter but without `output: 'static'`, SvelteKit without `@sveltejs/adapter-static`. `init` stops on each of these and says what to change.
-- **Astro adapters with `output: 'static'`.** Read in their source, not yet tried on a build: `@astrojs/node` and `@astrojs/netlify` still write the pages to `dist/`, so the static build saves. `@astrojs/netlify` also adds a `_redirects` file to `dist/` when the site has redirects. It has no file extension, so a save stops on it until you add it to `exclude`, which leaves it out of the deployed site too. For `@astrojs/vercel`, see [deploying.md](deploying.md#astro-with-astrojsvercel).
+- **Astro adapters with `output: 'static'`.** Read in their source, not yet tried on a build: `@astrojs/node` and `@astrojs/netlify` still write the pages to `dist/`, so the static build saves. `@astrojs/netlify` also adds a `_redirects` file to `dist/` when the site has redirects, which is saved with each version and deployed at the root as the build wrote it. For `@astrojs/vercel`, see [deploying.md](deploying.md#astro-with-astrojsvercel).
 - **Data still comes from where it came from.** A version that fetches from an API at runtime asks that API as it is today, not as it was when the version was saved.
-- **Some files stop a save.** Only common web file types are saved. [commands.md](commands.md#what-a-save-keeps) has the list, and `exclude` leaves out anything else.
+- **A version leaves out source maps and hidden files.** A save keeps every other file the prototype has, whatever its type, but skips `.map` files and anything whose name starts with `.`, such as `.well-known/`. A version that needs one of them renders without it. The live app at the root still gets them. [commands.md](commands.md#what-a-save-keeps) has the rules, and `exclude` leaves out anything else.
 
 ## Publishing
 
