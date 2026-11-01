@@ -93,3 +93,13 @@ test('a path that is absolute or leaves the project is rejected by field name', 
   await fs.writeFile(configPath(root), JSON.stringify({ out: '..site' }));
   assert.equal((await readConfig(root)).out, '..site');
 });
+
+test('a prototype at the project root leaves out the project\'s own docs, in any case and with any extension', () => {
+  const base = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'plain' };
+  const names = ['README.md', 'readme.txt', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md', 'index.html', 'readme-assets', 'READMEs.md', 'notes.md'];
+  const excluded = projectExcludes(base, names);
+  for (const name of ['README.md', 'readme.txt', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md']) assert.ok(excluded.includes(name), name);
+  for (const name of ['index.html', 'readme-assets', 'READMEs.md', 'notes.md']) assert.ok(!excluded.includes(name), name);
+  // A build folder is the prototype itself, so its files are its own.
+  assert.deepEqual(projectExcludes({ ...base, source: 'dist' }, ['README.md']), []);
+});

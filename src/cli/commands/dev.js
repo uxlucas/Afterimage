@@ -9,6 +9,8 @@ import { fileFor, requestPath, sendFile } from '../static-files.js';
 
 export const usage = 'afterimage dev [--port N]';
 export const summary = 'Serve the saved history at /afterimage/ while your app runs on its own dev server.';
+// Read by the docs tests, which check every flag the agent files name.
+export const options = { port: { type: 'string' }, help: { type: 'boolean', short: 'h' } };
 
 const defaultPort = 4321;
 const portAttempts = 20;
@@ -149,7 +151,7 @@ function untilStopped(signal) {
 export async function run(args, { cwd, stdout, stderr, viewerDir, runtimeDir, signal }) {
   let parsed;
   try {
-    parsed = parseArgs({ args, options: { port: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    parsed = parseArgs({ args, options });
   } catch (error) {
     if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
     stderr.write(`${error.message}\nUsage: ${usage}\n`);

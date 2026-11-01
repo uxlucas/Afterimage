@@ -8,6 +8,9 @@ const defaults = { source: '.', build: null, history: 'afterimage', out: '.after
 // Names that are the project's own files, not the prototype. They only matter when the prototype is the project root.
 // The host configs are the ones init writes; a plain folder set up by init must still save.
 const projectNames = ['node_modules', 'afterimage', '.afterimage', 'package.json', 'package-lock.json', configName, 'vercel.json', 'netlify.toml'];
+// And the project's own docs next to them: a README, a LICENSE and an agent's instructions (CLAUDE.md, AGENTS.md), in
+// any case and with any extension. Left in, a .md one would stop every save, and none of them is a page of the prototype.
+const projectDoc = /^(readme|license|claude|agents)(\..+)?$/i;
 
 // Same shape readSnapshot expects: forward slashes, no leading ./, no trailing slash. "x/../site" is "site" and "src/.." is ".".
 const cleanPath = value => {
@@ -58,8 +61,16 @@ export async function writeConfig(projectDir, config) {
 }
 
 // What the store leaves out when the prototype is the project root. A build folder has none of the project-level
-// names inside it, so only the user's own excludes apply there.
-export function projectExcludes(config) {
+// names inside it, so only the user's own excludes apply there. rootNames are the names at the top of the project as
+// they are spelled on disk, so the docs among them are left out by their own spelling.
+export function projectExcludes(config, rootNames = []) {
   if (cleanPath(config.source) !== '.' && cleanPath(config.source) !== '') return [...config.exclude];
-  return [...new Set([...projectNames, config.history, config.out, ...config.exclude].map(cleanPath))];
+  const docs = rootNames.filter(name => projectDoc.test(name));
+  return [...new Set([...projectNames, ...docs, config.history, config.out, ...config.exclude].map(cleanPath))];
+}
+
+// projectExcludes for the project as it is on disk now.
+export async function sourceExcludes(projectDir, config) {
+  const atRoot = cleanPath(config.source) === '.';
+  return projectExcludes(config, atRoot ? await fs.readdir(path.resolve(projectDir, config.source)) : []);
 }

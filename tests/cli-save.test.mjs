@@ -158,3 +158,18 @@ test('the afterimage binary prints help and lists save', () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /\bsave\b/);
 });
+
+test('a plain folder at the project root saves without its README, LICENSE and agent notes', async t => {
+  const root = await temp(t);
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Plain</h1>');
+  for (const name of ['README.md', 'LICENSE', 'CLAUDE.md', 'agents.md']) await fs.writeFile(path.join(root, name), 'project notes');
+  assert.equal((await run(root, ['init'])).code, 0);
+  const result = await run(root, ['save', 'First draft']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(await fs.readdir(path.join(root, 'afterimage/versions/v1')), ['index.html']);
+  const built = await run(root, ['build']);
+  assert.equal(built.code, 0, built.stderr);
+  for (const name of ['README.md', 'LICENSE', 'CLAUDE.md', 'agents.md']) {
+    assert.ok(!await fs.stat(path.join(root, '.afterimage/site', name)).catch(() => null), `${name} is not deployed`);
+  }
+});

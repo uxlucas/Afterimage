@@ -1,2 +1,3 @@
 examples/*/afterimage/** -text
 bin/* text eol=lf
+agents/** text eol=lf

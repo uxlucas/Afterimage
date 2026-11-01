@@ -7,7 +7,7 @@ Afterimage works from a coding agent such as Claude Code or Cursor. Paste the se
 Open your agent in your prototype's project and paste this:
 
 ```text
-Set up Afterimage, a version history for this prototype, in the project root. If the project has no package.json, run `npm init -y` first. Install Afterimage with `npm install --save-dev afterimage-cli`, then run `npx afterimage init`. If init stops because it can't tell which folder holds the prototype, ask me which folder it is (never guess), then run `npx afterimage init --source <folder>`, adding `--build "<command>"` if a build command writes that folder. If init or any later command stops with a different error, show me the message and stop. Show me any notes init prints after the list of files it changed. Add the Afterimage skill: in Claude Code, copy the folder `node_modules/afterimage-cli/agents/skill` to `.claude/skills/afterimage`, so that `.claude/skills/afterimage/SKILL.md` exists; in Cursor, copy `node_modules/afterimage-cli/agents/cursor/afterimage.mdc` to `.cursor/rules/afterimage.mdc`. Read `node_modules/afterimage-cli/agents/skill/SKILL.md` now and follow its rules from here on. Unless `afterimage/versions.json` already lists a version, save the current state with `npx afterimage save "First version"`. Then start `npx afterimage dev` as a background process, because it keeps running until it is stopped, wait for the line that starts with `Afterimage is running at`, and give me the exact URL on that line. The port is not always 4321.
+Set up Afterimage, a version history for this prototype, in the project root. If the project has no package.json, run `npm init -y` first. Install Afterimage with `npm install --save-dev afterimage-cli`. Then run `npx afterimage init --agent claude --no-input` if you are Claude Code, or `npx afterimage init --agent cursor --no-input` if you are Cursor; any other agent runs `npx afterimage init --no-input` and adds the contents of `node_modules/afterimage-cli/agents/skill/SKILL.md` to this project's AGENTS.md. If init stops with `Say where the prototype is`, ask me which folder holds the prototype (never guess), then run the same init command again with `--source <folder>` added, plus `--build "<command>"` if a build command writes that folder. If init's message says the project has `no static build`, tell me what the message says to change and stop, without passing `--source`; once I tell you I've made the change, run this setup again from the init step. If init or any later command stops with a different error, show me the message and stop. Show me any notes init prints after the list of files it changed. Read `node_modules/afterimage-cli/agents/skill/SKILL.md` now and follow it for the rest of this session. Unless `afterimage/versions.json` already lists a version, save the current state with `npx afterimage save "First version"`. Then start `npx afterimage dev` as a background process, because it keeps running until it is stopped, wait for the line that starts with `Afterimage is running at`, and give me the exact URL on that line; the port is not always 4321. Last, tell me that a new session, or `/reload-skills` in Claude Code, loads the Afterimage skill from then on.
 ```
 
 When it finishes, the first version is saved and the viewer is open at the URL the agent gives you.
@@ -40,7 +40,7 @@ The agent makes sure `npx afterimage dev` is running and gives you a link to the
 http://localhost:4321/afterimage/?version=v4&mode=compare&base=v2
 ```
 
-The port is the one dev printed, so it can differ. Add `&hl=1` to the link to highlight what changed. The viewer compares saved versions, so changes you haven't saved yet aren't in it.
+The port is the one dev printed, so it can differ. Add `&hl=1` to the link to highlight what changed. The viewer compares saved versions, so changes you haven't saved yet aren't in it. If v2 is the latest version, nothing has changed since it, and the agent says so instead of opening a comparison.
 
 ### Deploy the history
 
@@ -54,7 +54,7 @@ The agent runs:
 npx afterimage build
 ```
 
-then checks that `afterimage/`, `afterimage.config.json`, `package.json`, `.gitattributes` and `vercel.json` or `netlify.toml` are committed, and tells you which aren't. The site is in `.afterimage/site/`, with your app at the root and the history at `/afterimage/`. Vercel and Netlify run the same build from the files init wrote. The agent doesn't commit, push or deploy unless you ask it to.
+then checks that `afterimage/`, `afterimage.config.json`, `package.json` and `vercel.json` or `netlify.toml` are committed, since the host only sees what is in git, and tells you which aren't. The site is in `.afterimage/site/`, with your app at the root and the history at `/afterimage/`. Vercel and Netlify run the same build from the files init wrote. The agent doesn't commit, push or deploy unless you ask it to.
 
 ## Manual setup
 
@@ -96,26 +96,25 @@ npx afterimage save "First version"
 npx afterimage dev
 ```
 
-**5. Add the skill to your agent.** The package ships the commands and rules for agents, so a request like "save a version called Remember me" works. For Claude Code, copy the skill folder:
+**5. Add the skill to your agent.** The package ships the commands and rules for agents, so a request like "save a version called Remember me" works. For Claude Code, this copies the skill to `.claude/skills/afterimage/`:
 
 ```bash
-mkdir -p .claude/skills/afterimage
+npx afterimage init --agent claude
 ```
+
+For Cursor, this copies the same instructions as a rule to `.cursor/rules/afterimage.mdc`:
 
 ```bash
-cp -R node_modules/afterimage-cli/agents/skill/. .claude/skills/afterimage/
+npx afterimage init --agent cursor
 ```
 
-For Cursor, copy the rule:
+Pick one. Cursor also loads skills from `.claude/skills/` when it starts, so a project used with both agents only needs the skill, and one with both copies would load the instructions twice. Claude Code loads a new skill in a new session, or after `/reload-skills`. Run the same command again after you update afterimage-cli: init asks before it replaces a copy you have changed.
 
-```bash
-mkdir -p .cursor/rules
-```
+The skill's rules:
 
-```bash
-cp node_modules/afterimage-cli/agents/cursor/afterimage.mdc .cursor/rules/
-```
-
-Cursor also loads skills from `.claude/skills/` when it starts, so a project set up for Claude Code works there after a restart. Copy the files again after you update afterimage-cli.
-
-The skill's rules, in short: never edit `afterimage/versions/`, since every version is fingerprinted. Commit `afterimage/`, since a fresh checkout can't recover a version that isn't in git. Save before risky changes, so there is a version to go back to. Only save what you'd publish, since every saved version is deployed.
+- Never edit, move or delete anything in `afterimage/versions/`. Every version is fingerprinted when it is saved.
+- Commit `afterimage/` with the project, and never add it to `.gitignore`. A fresh checkout can't recover a version that isn't in git.
+- Save before risky changes. A version is the built page, kept to compare against and to share; the source belongs in git.
+- Only save what you'd publish. Every saved version is deployed with the history.
+- An unchanged prototype saves nothing.
+- One save at a time.

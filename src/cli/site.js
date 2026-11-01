@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { projectExcludes } from './config.js';
+import { sourceExcludes } from './config.js';
 import { readSnapshot, verifyHistory } from './history.js';
 import { runBuild } from './run-build.js';
 
@@ -100,7 +100,7 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
   let app;
   if (includeApp) {
     if (config.build) await runBuild(config.build, projectDir, { stdio: buildStdio, closing: 'Nothing was built.' });
-    const excluded = projectExcludes(config);
+    const excluded = await sourceExcludes(projectDir, config);
     await checkCollision(sourceDir, excluded);
     // Same selection as a save, so the live root matches what a save captures.
     app = await readSnapshot(sourceDir, { exclude: excluded });

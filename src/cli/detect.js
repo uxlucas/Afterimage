@@ -31,7 +31,7 @@ async function detectPlain(projectDir, wrapped = false) {
   }
   const folders = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     if (await readText(path.join(projectDir, entry.name, 'index.html')) !== null) folders.push(entry.name);
   }
   if (folders.length === 1) return found('plain', folders[0], null, `Found index.html in ${folders[0]}/; it is the prototype.`);

@@ -1,12 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { configName, readConfig, writeConfig } from '../config.js';
 import { detectProject } from '../detect.js';
 
-export const usage = 'afterimage init [--source <folder>] [--build "<command>"]';
+export const usage = 'afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]';
 export const summary = 'Set up Afterimage in this project: config, scripts, git rules and host config.';
+// Read by the docs tests, which check every flag the agent files name.
+export const options = { source: { type: 'string' }, build: { type: 'string' }, agent: { type: 'string' }, 'no-input': { type: 'boolean' }, help: { type: 'boolean', short: 'h' } };
 
 const scripts = {
   'afterimage:save': 'afterimage save',
@@ -26,11 +29,18 @@ const hostOutput = '.afterimage/site';
 // checks the filesystem first), and this one leaves /afterimage/ out altogether. tests/e2e/harness.mjs reads it.
 export const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)', destination: '/:path*.html' };
 
-// Init never writes into an agent's folder unasked; it says where the package's copies are (docs/agents.md has the rest).
+// The skill and the Cursor rule the package ships, found from this file so they work from node_modules and a checkout.
+const packagedAgentsDir = fileURLToPath(new URL('../../../agents/', import.meta.url));
+
+// Where each agent reads Afterimage's instructions from. Init only writes there when --agent asks it to.
+const agents = {
+  claude: { from: 'skill', to: '.claude/skills/afterimage', what: 'skill', loads: 'Claude Code loads the skill in a new session, or after /reload-skills.' },
+  cursor: { from: 'cursor/afterimage.mdc', to: '.cursor/rules/afterimage.mdc', what: 'rule', loads: null }
+};
+
 const skillHint = [
-  'To let your coding agent save and compare versions:',
-  '  Claude Code: copy node_modules/afterimage-cli/agents/skill/ to .claude/skills/afterimage/',
-  '  Cursor: copy node_modules/afterimage-cli/agents/cursor/afterimage.mdc to .cursor/rules/'
+  'To let your coding agent save and compare versions, run one of:',
+  ...Object.entries(agents).map(([name, agent]) => `  npx afterimage init --agent ${name}   copies the ${agent.what} to ${agent.to}${agent.what === 'skill' ? '/' : ''}`)
 ].join('\n');
 
 const nextStep = 'Next: npx afterimage save "First version"';
@@ -380,21 +390,65 @@ async function planNetlify(cwd) {
   };
 }
 
+// Every file of the package's copy for this agent, as [package path, project path], forward slashes.
+async function agentFiles({ from, to }) {
+  const source = path.join(packagedAgentsDir, from);
+  if (!(await fs.stat(source)).isDirectory()) return [[from, to]];
+  const names = (await fs.readdir(source, { recursive: true, withFileTypes: true })).filter(entry => entry.isFile());
+  return names.map(entry => {
+    const relative = path.relative(source, path.join(entry.parentPath, entry.name)).replace(/\\/g, '/');
+    return [`${from}/${relative}`, `${to}/${relative}`];
+  }).sort(([a], [b]) => (a < b ? -1 : 1));
+}
+
+// A checkout with autocrlf can turn the copy's line endings, which is still the same copy, so it is not asked about.
+const sameText = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
+
+async function planAgent(cwd, name, { isTTY, ask }) {
+  if (!name) return { change: null, notes: [], apply: null };
+  const changes = [];
+  const notes = [];
+  const writes = [];
+  for (const [from, to] of await agentFiles(agents[name])) {
+    const text = await fs.readFile(path.join(packagedAgentsDir, from), 'utf8');
+    const before = await readText(path.join(cwd, to));
+    if (before !== null && sameText(before, text)) continue;
+    if (before !== null) {
+      // The file is the person's now; they may have edited it.
+      const agreed = isTTY && /^y(es)?$/i.test((await ask(`${to} differs from Afterimage's copy. Replace it? (y/N)`)).trim());
+      if (!agreed) {
+        notes.push(`${to} differs from Afterimage's copy, so Afterimage left it as it is. To replace it, run "npx afterimage init --agent ${name}" in a terminal and answer y.`);
+        continue;
+      }
+    }
+    changes.push(`${before === null ? 'Created' : 'Updated'} ${to}`);
+    writes.push([path.join(cwd, to), text]);
+  }
+  return {
+    change: changes.join('\n') || null,
+    notes,
+    apply: writes.length ? async () => {
+      for (const [file, text] of writes) {
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, text);
+      }
+    } : null
+  };
+}
+
 export async function run(args, ctx) {
   const { cwd, stdout, stderr } = ctx;
-  // Prompts only happen with a real terminal; tests inject both pieces.
-  const prompt = { isTTY: ctx.isTTY ?? Boolean(process.stdin.isTTY), ask: ctx.ask ?? askInTerminal };
 
   let parsed;
   try {
-    parsed = parseArgs({ args, options: { source: { type: 'string' }, build: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
+    parsed = parseArgs({ args, options });
   } catch (error) {
     if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
     stderr.write(`${error.message}\nUsage: ${usage}\n`);
     return 2;
   }
   if (parsed.values.help) {
-    stdout.write(`Usage: ${usage}\n\n${summary}\n\n  --source <folder>    the folder that holds the prototype, or that your build writes to\n  --build "<command>"  the command that builds it, when there is one\n`);
+    stdout.write(`Usage: ${usage}\n\n${summary}\n\n  --source <folder>      the folder that holds the prototype, or that your build writes to\n  --build "<command>"    the command that builds it, when there is one\n  --agent claude|cursor  also copy Afterimage's skill (Claude Code) or rule (Cursor) into this project\n  --no-input             ask nothing, even in a terminal, and print what is left to do instead\n`);
     return 0;
   }
   const flags = { source: parsed.values.source, build: parsed.values.build };
@@ -402,6 +456,15 @@ export async function run(args, ctx) {
     stderr.write(`--source needs a folder.\nUsage: ${usage}\n`);
     return 2;
   }
+  const agent = parsed.values.agent;
+  if (agent !== undefined && !Object.hasOwn(agents, agent)) {
+    stderr.write(`--agent needs claude or cursor.\nUsage: ${usage}\n`);
+    return 2;
+  }
+  // Prompts only happen with a real terminal. An agent's terminal can look like one, so --no-input rules them out.
+  // Tests inject both pieces.
+  const isTTY = !parsed.values['no-input'] && (ctx.isTTY ?? Boolean(process.stdin.isTTY));
+  const prompt = { isTTY, ask: ctx.ask ?? askInTerminal };
 
   // Plan first, write after. package.json is read before the config step so a bad one stops init before any question,
   // and detection (which reads package.json) still sees the project as it was.
@@ -415,7 +478,8 @@ export async function run(args, ctx) {
       await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
       await planLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore),
       await planVercel(cwd, prompt),
-      await planNetlify(cwd)
+      await planNetlify(cwd),
+      await planAgent(cwd, agent, prompt)
     ];
   } catch (error) {
     // Ctrl-C at a prompt. Nothing has been written yet, so stopping here is clean. 130 is the shell's code for SIGINT.
@@ -431,6 +495,8 @@ export async function run(args, ctx) {
   if (changes.length) stdout.write(`${changes.join('\n')}\n`);
   else stdout.write(notes.length ? 'No files changed. Still left for you:\n' : 'Everything is already set up. Nothing changed.\n');
   if (notes.length) stdout.write(`${changes.length ? '\n' : ''}${notes.join('\n\n')}\n`);
-  stdout.write(`\n${skillHint}\n${nextStep}\n`);
+  // With --agent the copy is in place, and a fresh one needs loading; without it, say how to add it.
+  const agentLine = agent ? plans.at(-1).change && agents[agent].loads : skillHint;
+  stdout.write(`\n${agentLine ? `${agentLine}\n` : ''}${nextStep}\n`);
   return 0;
 }

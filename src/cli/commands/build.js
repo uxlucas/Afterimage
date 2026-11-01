@@ -5,11 +5,13 @@ import { assembleSite } from '../site.js';
 
 export const usage = 'afterimage build';
 export const summary = 'Build the prototype and write the deployable site with the history at /afterimage/.';
+// Read by the docs tests, which check every flag the agent files name.
+export const options = { help: { type: 'boolean', short: 'h' } };
 
 export async function run(args, { cwd, stdout, stderr, buildStdio, viewerDir, runtimeDir }) {
   let parsed;
   try {
-    parsed = parseArgs({ args, options: { help: { type: 'boolean', short: 'h' } } });
+    parsed = parseArgs({ args, options });
   } catch (error) {
     if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
     stderr.write(`${error.message}\nUsage: ${usage}\n`);

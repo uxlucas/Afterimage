@@ -796,21 +796,114 @@ for (const [title, setup, args] of [
   });
 }
 
-test('init names where the agent skill is', async t => {
+const packageRoot = path.resolve(import.meta.dirname, '..');
+const packaged = name => fs.readFile(path.join(packageRoot, 'agents', name), 'utf8');
+const skillTarget = '.claude/skills/afterimage/SKILL.md';
+const ruleTarget = '.cursor/rules/afterimage.mdc';
+
+async function plainProject(t) {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
+  return root;
+}
+
+test('init names where the agent skill is', async t => {
+  const root = await plainProject(t);
   const result = await run(root);
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /^ {2}Claude Code: copy node_modules\/afterimage-cli\/agents\/skill\/ to \.claude\/skills\/afterimage\/$/m);
-  assert.match(result.stdout, /^ {2}Cursor: copy node_modules\/afterimage-cli\/agents\/cursor\/afterimage\.mdc to \.cursor\/rules\/$/m);
-  // Every path it names inside the package is a file the package ships.
-  const packageRoot = path.resolve(import.meta.dirname, '..');
+  const named = [...result.stdout.matchAll(/^ {2}npx afterimage init --agent (\w+) {3}copies the (?:skill|rule) to (\S+)$/gm)].map(match => match.slice(1));
+  assert.deepEqual(named, [['claude', '.claude/skills/afterimage/'], ['cursor', ruleTarget]]);
+  // Each line is true: the flag it names puts the package's copy where it says.
   const shipped = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).files;
-  const named = [...result.stdout.matchAll(/node_modules\/afterimage-cli\/(\S+)/g)].map(match => match[1]);
-  assert.deepEqual(named, ['agents/skill/', 'agents/cursor/afterimage.mdc']);
-  for (const name of named) {
-    assert.ok(shipped.includes(name.split('/')[0]), `${name} is in package.json files`);
-    assert.ok(await exists(packageRoot, name), `${name} exists`);
+  assert.ok(shipped.includes('agents'));
+  for (const [agent, target] of named) {
+    const again = await run(root, ['--agent', agent]);
+    assert.equal(again.code, 0, again.stderr);
+    assert.ok(await exists(root, target.endsWith('/') ? `${target}SKILL.md` : target), target);
   }
-  assert.ok(await exists(packageRoot, 'agents/skill/SKILL.md'));
+});
+
+test('--agent claude copies the skill and says how it loads', async t => {
+  const root = await plainProject(t);
+  const result = await run(root, ['--agent', 'claude']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await read(root, skillTarget), await packaged('skill/SKILL.md'));
+  assert.match(result.stdout, /^Created \.claude\/skills\/afterimage\/SKILL\.md$/m);
+  assert.match(result.stdout, /\/reload-skills/);
+  assert.doesNotMatch(result.stdout, /--agent cursor/);
+  assert.ok(!await exists(root, '.cursor'));
+});
+
+test('--agent cursor copies the rule', async t => {
+  const root = await plainProject(t);
+  const result = await run(root, ['--agent', 'cursor']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await read(root, ruleTarget), await packaged('cursor/afterimage.mdc'));
+  assert.match(result.stdout, /^Created \.cursor\/rules\/afterimage\.mdc$/m);
+  assert.ok(!await exists(root, '.claude'));
+});
+
+test('--agent on a project that is already set up only adds the copy, and a second run changes nothing', async t => {
+  const root = await plainProject(t);
+  await run(root);
+  const first = await run(root, ['--agent', 'claude']);
+  assert.equal(first.stdout.split('\n')[0], 'Created .claude/skills/afterimage/SKILL.md');
+  const before = await snapshot(root);
+  const second = await run(root, ['--agent', 'claude']);
+  assert.equal(second.code, 0, second.stderr);
+  assert.match(second.stdout, /^Everything is already set up\. Nothing changed\.$/m);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('a copy that only differs in line endings counts as the same', async t => {
+  const root = await plainProject(t);
+  await fs.mkdir(path.join(root, '.cursor/rules'), { recursive: true });
+  await write(root, ruleTarget, (await packaged('cursor/afterimage.mdc')).replace(/\n/g, '\r\n'));
+  const result = await run(root, ['--agent', 'cursor'], { answers: [] });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.questions, []);
+  assert.doesNotMatch(result.stdout, /afterimage\.mdc/);
+});
+
+for (const [title, options, args, replaced] of [
+  ['after a yes', { answers: ['y'] }, [], true],
+  ['not after a no', { answers: ['n'] }, [], false],
+  ['not without a TTY', {}, [], false],
+  ['not with --no-input, and nothing is asked', { answers: ['y'] }, ['--no-input'], false]
+]) {
+  test(`a skill that differs from the package's is replaced ${title}`, async t => {
+    const root = await plainProject(t);
+    await fs.mkdir(path.join(root, '.claude/skills/afterimage'), { recursive: true });
+    await write(root, skillTarget, 'my own notes\n');
+    const result = await run(root, ['--agent', 'claude', ...args], options);
+    assert.equal(result.code, 0, result.stderr);
+    if (options.answers && !args.includes('--no-input')) assert.deepEqual(result.questions, [`${skillTarget} differs from Afterimage's copy. Replace it? (y/N)`]);
+    else assert.deepEqual(result.questions, []);
+    if (replaced) {
+      assert.equal(await read(root, skillTarget), await packaged('skill/SKILL.md'));
+      assert.match(result.stdout, /^Updated \.claude\/skills\/afterimage\/SKILL\.md$/m);
+    } else {
+      assert.equal(await read(root, skillTarget), 'my own notes\n');
+      assert.match(result.stdout, /\.claude\/skills\/afterimage\/SKILL\.md differs from Afterimage's copy, so Afterimage left it as it is/);
+    }
+  });
+}
+
+test('an unknown --agent is a usage error and writes nothing', async t => {
+  const root = await plainProject(t);
+  const before = await snapshot(root);
+  const result = await run(root, ['--agent', 'codex']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /^--agent needs claude or cursor\.$/m);
+  assert.match(result.stderr, /Usage: afterimage init/);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test('--no-input asks nothing in a terminal and stops where there is no TTY', async t => {
+  const root = await temp(t);
+  const result = await run(root, ['--no-input'], { answers: ['out'] });
+  assert.equal(result.code, 1);
+  assert.deepEqual(result.questions, []);
+  assert.match(result.stderr, /afterimage init --source <folder>/);
+  assert.deepEqual(Object.keys(await snapshot(root)), []);
 });
