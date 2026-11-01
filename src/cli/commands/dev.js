@@ -49,7 +49,8 @@ async function listen(server, start) {
       });
       return server.address().port;
     } catch (error) {
-      if (error.code !== 'EADDRINUSE') throw error;
+      // EACCES: Windows refuses ports in the ranges Hyper-V, WSL or Docker reserve, which nothing answers on beforehand.
+      if (error.code !== 'EADDRINUSE' && error.code !== 'EACCES') throw error;
     }
   }
   throw new Error(`No free port from ${start} to ${start + portAttempts - 1}. Pass one with --port.`);

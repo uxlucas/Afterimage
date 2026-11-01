@@ -129,7 +129,13 @@ test('dev serves the history at /afterimage/ from its own folder and never touch
 });
 
 // A free port whose neighbour is free too, held on `host`. Returns null when this machine cannot listen on that host.
+// The neighbour is free on `host` and on 127.0.0.1, where dev listens: Windows reserves port ranges per address family
+// (Hyper-V, WSL), so a neighbour free on ::1 can still be refused on 127.0.0.1.
 async function holdPort(host) {
+  const canListen = (port, on) => {
+    const server = net.createServer();
+    return new Promise(resolve => server.once('error', () => resolve(false)).listen(port, on, () => server.close(() => resolve(true))));
+  };
   for (;;) {
     const holder = net.createServer();
     try {
@@ -139,10 +145,7 @@ async function holdPort(host) {
       throw error;
     }
     const port = holder.address().port;
-    const neighbour = net.createServer();
-    const free = await new Promise(resolve => neighbour.once('error', () => resolve(false)).listen(port + 1, host, () => resolve(true)));
-    if (free) await new Promise(resolve => neighbour.close(resolve));
-    if (free) return { holder, port };
+    if (await canListen(port + 1, host) && await canListen(port + 1, '127.0.0.1')) return { holder, port };
     await new Promise(resolve => holder.close(resolve));
   }
 }
@@ -162,6 +165,26 @@ for (const host of ['127.0.0.1', '0.0.0.0', '::', '::1']) {
     assert.equal((await get(dev, '/afterimage/')).status, 200);
   });
 }
+
+// Windows refuses a port in a range Hyper-V, WSL or Docker reserved with EACCES, not EADDRINUSE, and nothing answers on
+// it beforehand. Such a port is passed over like a taken one.
+test('a port the system refuses moves to the next free one', async t => {
+  const held = await holdPort('127.0.0.1');
+  await new Promise(resolve => held.holder.close(resolve));
+  const refused = held.port;
+  const listen = net.Server.prototype.listen;
+  t.mock.method(net.Server.prototype, 'listen', function (port, ...rest) {
+    if (port !== refused) return listen.call(this, port, ...rest);
+    process.nextTick(() => this.emit('error', Object.assign(new Error(`listen EACCES: permission denied 127.0.0.1:${port}`), { code: 'EACCES' })));
+    return this;
+  });
+  const dirs = await fixtures(t);
+  const root = await project(t);
+
+  const { dev } = await start(t, root, dirs, { port: refused });
+  assert.equal(new URL(dev.url).port, String(refused + 1));
+  assert.equal((await get(dev, '/afterimage/')).status, 200);
+});
 
 test('a request path that cannot be decoded, or holds a NUL, gets 400 and logs nothing', async t => {
   const dirs = await fixtures(t);

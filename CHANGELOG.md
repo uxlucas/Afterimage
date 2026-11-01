@@ -3,6 +3,7 @@
 ## 0.1.1
 
 - **`init` keeps Next.js's long cache on the live app.** For a project that depends on `next`, `vercel.json` gets a header rule and a new `netlify.toml` a `[[headers]]` block that serve `/_next/static/` with `public, max-age=31536000, immutable`. The host settings Afterimage needs for Next.js turn off each host's own Next.js handling, which set that header, and real deploys of 0.1.0 showed those files served with `max-age=0`. Run `npx afterimage init` again to add it to a project set up with 0.1.0; for an existing `netlify.toml` it prints the lines to add.
+- **`afterimage dev` passes over a port Windows refuses.** Windows reserves port ranges for Hyper-V, WSL and Docker and refuses them with a permission error, which stopped `dev` instead of moving it to the next port, as a taken port does.
 
 ## 0.1.0
 
