@@ -57,7 +57,7 @@ Builds the prototype and saves it as the next version.
 
 - The name goes in quotes, up to 120 characters. Each note is up to 500 characters.
 - When the config has a build command, save runs it first. If the build fails, nothing is saved.
-- The version goes to `afterimage/versions/vN/`, and `afterimage/versions.json` lists it first. On success it prints `Saved v4 "Remember me".`
+- The version goes to `afterimage/versions/vN/`, and `afterimage/versions.json` lists it first. On success it prints `Saved v4 "Remember me".`, then what the version adds and the history's total, such as `v4 adds 340 KB. History: 4 versions, 1.2 MB.` Once the total passes 100 MB it adds a line saying so ([limits.md](limits.md#history-size)).
 - If the prototype is the same as the latest version, it prints `Nothing changed since v3 "Passkeys". Nothing was saved.` and exits 0.
 - It checks every saved version against its fingerprint first, and stops if one was edited.
 - One save runs at a time. While a save runs it holds `.afterimage-save.lock` in the history folder, and a second save stops with `Another save is active.` rather than waiting. A save that fails removes the lock itself. A save that was killed (Ctrl-C, a timeout) leaves the lock and a work folder behind, and the next save clears both once that process has ended. If `Another save is active.` still shows when no save is running, delete `afterimage/.afterimage-save.lock`.

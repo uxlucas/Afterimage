@@ -11,7 +11,7 @@ export const help = `Usage: ${usage}\n\n${summary}\n\n  --note "..."  a note on 
 // Read by the docs tests, which check every flag the agent files name.
 export const options = { note: { type: 'string', multiple: true }, help: { type: 'boolean', short: 'h' } };
 
-export async function run(args, { cwd, stdout, stderr, buildStdio }) {
+export async function run(args, { cwd, stdout, stderr, buildStdio, largeHistory = 100_000_000 }) {
   let parsed;
   try {
     parsed = parseArgs({ args, allowPositionals: true, options });
@@ -32,12 +32,29 @@ export async function run(args, { cwd, stdout, stderr, buildStdio }) {
 
   const config = await readConfig(cwd);
   if (config.build) await runBuild(config.build, cwd, { stdio: buildStdio });
-  const { version, unchanged } = await saveVersion(
+  const { version, unchanged, bytes, history } = await saveVersion(
     { historyDir: path.resolve(cwd, config.history), sourceDir: path.resolve(cwd, config.source), exclude: await sourceExcludes(cwd, config) },
     { name, notes: parsed.values.note ?? [] }
   );
-  stdout.write(unchanged
-    ? `Nothing changed since ${version.id} "${version.name}". Nothing was saved.\n`
-    : `Saved ${version.id} "${version.name}".\n`);
+  if (unchanged) {
+    stdout.write(`Nothing changed since ${version.id} "${version.name}". Nothing was saved.\n`);
+    return 0;
+  }
+  stdout.write(`Saved ${version.id} "${version.name}".\n`);
+  stdout.write(`${version.id} adds ${formatSize(bytes)}. History: ${history.versions} ${history.versions === 1 ? 'version' : 'versions'}, ${formatSize(history.bytes)}.\n`);
+  // Every version is a full copy and every deploy carries all of them, so growth is said out loud rather than capped.
+  if (history.bytes >= largeHistory) {
+    stdout.write(`The history is ${formatSize(history.bytes)}, and every deploy carries all of it. Large images and video are the usual cause: ${sizeDocs}\n`);
+  }
   return 0;
+}
+
+export const sizeDocs = 'https://github.com/uxlucas/Afterimage/blob/main/docs/limits.md#history-size';
+
+// Decimal units, as macOS Finder and npm count them.
+export function formatSize(bytes) {
+  if (bytes < 1000) return `${bytes} ${bytes === 1 ? 'byte' : 'bytes'}`;
+  if (bytes < 999_500) return `${Math.round(bytes / 1000)} KB`;
+  if (bytes < 999_950_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
 }

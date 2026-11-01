@@ -90,8 +90,16 @@ export async function readHistory(historyDir) {
   return validateManifest(JSON.parse(text));
 }
 
+const snapshotBytes = files => [...files.values()].reduce((total, bytes) => total + bytes.length, 0);
+
 export async function verifyHistory(historyDir) {
+  return (await checkHistory(historyDir)).manifest;
+}
+
+// Checks every saved version against its fingerprint, and adds up their bytes on the way, which a save reports.
+async function checkHistory(historyDir) {
   const manifest = await readHistory(historyDir);
+  let bytes = 0;
   const versionsDir = path.join(historyDir, 'versions');
   let directories = [];
   try {
@@ -108,8 +116,9 @@ export async function verifyHistory(historyDir) {
     if (fingerprint(files) !== version.sha256) {
       throw new Error(`${version.id} has changed since it was saved. Restore its original files; saved versions are never edited.`);
     }
+    bytes += snapshotBytes(files);
   }
-  return manifest;
+  return { manifest, bytes };
 }
 
 const lockName = '.afterimage-save.lock';
@@ -169,7 +178,8 @@ export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { nam
   let committed = false;
   try {
     await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-    const manifest = (await verifyHistory(historyDir)) ?? { schemaVersion: 1, versions: [] };
+    const checked = await checkHistory(historyDir);
+    const manifest = checked.manifest ?? { schemaVersion: 1, versions: [] };
     const latest = manifest.versions[0];
     const source = await readSnapshot(sourceDir, { exclude });
     const sourceSha = fingerprint(source);
@@ -207,7 +217,8 @@ export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { nam
     // Publish the manifest last so readers never see a half-written snapshot.
     await retryLocked(() => fs.rename(stagedManifest, manifestPath(historyDir)));
     committed = true;
-    return { version, unchanged: false };
+    const bytes = snapshotBytes(files);
+    return { version, unchanged: false, bytes, history: { versions: manifest.versions.length, bytes: checked.bytes + bytes } };
   } finally {
     // Cleanup never replaces the outcome: a committed save is reported as saved, a failed one by its own error. What
     // a failed step leaves behind is safe: an unlisted snapshot stops the next save by name, and the next save clears

@@ -9,6 +9,13 @@ What Afterimage doesn't do, and where a version can behave differently from the 
 - **Data still comes from where it came from.** A version that fetches from an API at runtime asks that API as it is today, not as it was when the version was saved.
 - **A version leaves out source maps and hidden files.** A save keeps every other file the prototype has, whatever its type, but skips `.map` files and anything whose name starts with `.`, such as `.well-known/`. A version that needs one of them renders without it. The live app at the root still gets them. [commands.md](commands.md#what-a-save-keeps) has the rules, and `exclude` leaves out anything else.
 
+## History size
+
+- **Every version is a full copy.** A save copies the whole build, and versions share no files. A plain HTML page is a few KB per version, a Vite and React app a few hundred KB, a Next.js export closer to 1 MB. Images and video count in full every time: a 5 MB video adds 5 MB to each version that has it.
+- **Every deploy carries all of it.** The history is part of the site, so a host uploads it with each deploy. Git stores a file that didn't change between versions once, so the repository grows more slowly than the history folder.
+- **Save says how big it is.** After each save it prints what the version adds and the history's total. Once the total passes 100 MB it says so, with a link here. There's no cap: nothing is ever dropped.
+- **Keeping it small.** Compress images and video before saving. Save when a version is worth showing, not after every edit. A large file that doesn't need to be in each version can go in `exclude`, and versions then render without it. Afterimage has no command to remove a saved version.
+
 ## Publishing
 
 - **Every saved version is public.** Each one deploys with your site, at `/afterimage/`, to anyone who has the link. Afterimage has no command to take a version back, and saved versions are never edited, so treat a save as publishing and save only what you'd show.

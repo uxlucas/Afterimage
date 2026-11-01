@@ -18,7 +18,7 @@ npx afterimage save "Remember me" --note "Keeps people signed in for 30 days."
 - It runs the prototype's build first when `afterimage.config.json` has one, then saves the result.
 - The name goes in quotes, up to 120 characters. `--note` is optional and can be repeated, one note each, up to 500 characters.
 - Keep names and notes to plain text. A `"`, `$` or backtick inside them breaks the shell's quoting, so leave those out or escape them for the shell you are in.
-- On success it prints `Saved v4 "Remember me".` Tell the user the id it printed.
+- On success it prints `Saved v4 "Remember me".` and the version's size. Tell the user the id it printed. If it says the history is over 100 MB, pass that line on too.
 - `Nothing changed since v3 "Passkeys". Nothing was saved.` means the prototype is the same as the last saved version. Tell the user and stop there.
 
 ### Open the history

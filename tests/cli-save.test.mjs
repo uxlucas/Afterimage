@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { main } from '../src/cli/main.js';
 import { writeConfig } from '../src/cli/config.js';
 import { frameTag } from '../src/runtime/map.js';
+import { formatSize, sizeDocs } from '../src/cli/commands/save.js';
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -20,10 +21,10 @@ async function temp(t) {
 }
 
 // Collects what a command writes so tests can read it back. The build's own output is dropped.
-async function run(cwd, args) {
+async function run(cwd, args, context = {}) {
   const out = [];
   const err = [];
-  const code = await main(args, { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, buildStdio: 'ignore' });
+  const code = await main(args, { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, buildStdio: 'ignore', ...context });
   return { code, stdout: out.join(''), stderr: err.join('') };
 }
 
@@ -40,15 +41,20 @@ async function project(t, build = copyBuild) {
 
 const listing = async directory => (await fs.readdir(directory, { recursive: true })).sort();
 
+// What a saved page weighs: its bytes plus the frame tag the save adds.
+const saved = (id, html) => Buffer.byteLength(frameTag(id) + html);
+
 test('save builds, then saves the build output as the next version', async t => {
   const root = await project(t);
   const first = await run(root, ['save', 'First draft', '--note', 'Rough layout', '--note', 'No copy yet']);
   assert.equal(first.code, 0);
-  assert.equal(first.stdout, 'Saved v1 "First draft".\n');
+  const one = saved('v1', '<h1>One</h1>');
+  assert.equal(first.stdout, `Saved v1 "First draft".\nv1 adds ${one} bytes. History: 1 version, ${one} bytes.\n`);
   await fs.writeFile(path.join(root, 'page.txt'), '<h1>Two</h1>');
   const second = await run(root, ['save', 'Second draft']);
   assert.equal(second.code, 0);
-  assert.equal(second.stdout, 'Saved v2 "Second draft".\n');
+  const two = saved('v2', '<h1>Two</h1>');
+  assert.equal(second.stdout, `Saved v2 "Second draft".\nv2 adds ${two} bytes. History: 2 versions, ${one + two} bytes.\n`);
   const history = path.join(root, 'afterimage');
   assert.equal(await fs.readFile(path.join(history, 'versions/v1/index.html'), 'utf8'), `${frameTag('v1')}<h1>One</h1>`);
   assert.equal(await fs.readFile(path.join(history, 'versions/v2/index.html'), 'utf8'), `${frameTag('v2')}<h1>Two</h1>`);
@@ -73,7 +79,32 @@ test('save without a build command saves the source folder as it is', async t =>
   await fs.writeFile(path.join(root, 'dist/index.html'), '<h1>Hand made</h1>');
   const result = await run(root, ['save', 'By hand']);
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, 'Saved v1 "By hand".\n');
+  assert.match(result.stdout, /^Saved v1 "By hand"\.\n/);
+});
+
+test('sizes read in bytes, KB, MB and GB, counted in thousands', () => {
+  assert.equal(formatSize(0), '0 bytes');
+  assert.equal(formatSize(1), '1 byte');
+  assert.equal(formatSize(999), '999 bytes');
+  assert.equal(formatSize(1000), '1 KB');
+  assert.equal(formatSize(340_400), '340 KB');
+  assert.equal(formatSize(999_499), '999 KB');
+  assert.equal(formatSize(999_500), '1.0 MB');
+  assert.equal(formatSize(4_120_000), '4.1 MB');
+  assert.equal(formatSize(999_949_999), '999.9 MB');
+  assert.equal(formatSize(999_950_000), '1.0 GB');
+});
+
+test('a history past the size warning says how big it is and where to read about it', async t => {
+  const root = await project(t);
+  const one = saved('v1', '<h1>One</h1>');
+  const quiet = await run(root, ['save', 'First draft'], { largeHistory: one + 1 });
+  assert.equal(quiet.stdout.trimEnd().split('\n').length, 2);
+  await fs.writeFile(path.join(root, 'page.txt'), '<h1>Two</h1>');
+  const loud = await run(root, ['save', 'Second draft'], { largeHistory: one + 1 });
+  assert.equal(loud.code, 0);
+  const total = one + saved('v2', '<h1>Two</h1>');
+  assert.equal(loud.stdout.trimEnd().split('\n')[2], `The history is ${total} bytes, and every deploy carries all of it. Large images and video are the usual cause: ${sizeDocs}`);
 });
 
 test('a failing build saves nothing and leaves no lock or stage folder', async t => {
