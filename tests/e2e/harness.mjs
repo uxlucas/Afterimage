@@ -318,7 +318,8 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
   const server = plain ? await servePlain(site, { cleanUrls }) : await serve(site);
   let browser;
   try {
-    browser = await chromium.launch({ channel: 'chrome' });
+    // CI installs its own Chrome and names it in CHROME_PATH; elsewhere the installed Chrome is used.
+    browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' });
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
     const requests = watchRequests(page, server.origin, appMisses);
     // atRoot: the step opened the app at / itself, so root paths are expected there.
