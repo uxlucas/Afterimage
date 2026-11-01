@@ -12,7 +12,7 @@ const crossOrigin = () => ({
   },
 });
 
-test('frameWindow returns a same-origin window and null for anything else (Ruling 27)', () => {
+test('frameWindow returns a same-origin window and null for anything else', () => {
   const frame = sameOrigin('http://localhost/versions/v2/index.html');
   assert.equal(frameWindow(frame), frame.contentWindow);
   assert.equal(frameWindow(crossOrigin()), null);
@@ -21,13 +21,13 @@ test('frameWindow returns a same-origin window and null for anything else (Rulin
   assert.equal(frameWindow({ contentWindow: { document: null } }), null);
 });
 
-test('withoutHash keeps origin, path and query, and drops the fragment (I1)', () => {
+test('withoutHash keeps origin, path and query, and drops the fragment', () => {
   assert.equal(withoutHash('http://localhost:5173/versions/v2/index.html?a=1#pricing'), 'http://localhost:5173/versions/v2/index.html?a=1');
   assert.equal(withoutHash('http://localhost/x.html'), 'http://localhost/x.html');
   assert.equal(withoutHash('not a url'), null);
 });
 
-test('sameDocument ignores a hash change but not a path or query change (I1)', () => {
+test('sameDocument ignores a hash change but not a path or query change', () => {
   const file = 'http://localhost/versions/v2/index.html';
   assert.equal(sameDocument(`${file}#section`, file), true);
   assert.equal(sameDocument(`${file}#/route/a`, `${file}#/route/b`), true);
@@ -105,7 +105,7 @@ test('replaceFrame moves a frame without a history entry, and sets src only on a
   assert.equal(detached.src, 'http://localhost/afterimage/versions/v1/index.html');
 });
 
-// ---- the URL writer (C1) ----
+// ---- the URL writer ----
 
 function fakeClock() {
   let now = 0;

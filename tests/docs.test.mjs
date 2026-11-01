@@ -125,3 +125,19 @@ test('the launch video recorder carries nothing of the project Afterimage grew o
     }
   }
 });
+
+// The public source cites no private planning notes (rulings, review finding ids, a spec or brief nobody can read). The
+// pattern is built from parts so this file does not match itself.
+const planningTrail = new RegExp([String.raw`Rul${'ing'} \d`, String.raw`\([CIM]\d\)`, String.raw`\b[Tt]he (spec|brief)'s\b`, `Task by ${'task'}`].join('|'));
+
+test('the source, tests, scripts, agent files and docs cite no planning notes', async () => {
+  const names = [];
+  for (const folder of ['src', 'tests', 'scripts', 'agents', 'docs']) {
+    const entries = await fs.readdir(path.join(root, folder), { recursive: true, withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && /\.(m?js|jsx|css|html|json|md|mdc|txt|ya?ml)$/.test(entry.name)) names.push(path.relative(root, path.join(entry.parentPath, entry.name)));
+    }
+  }
+  assert.ok(names.length > 50, 'the folders were read');
+  for (const name of names) assert.doesNotMatch(await read(name), planningTrail, name);
+});

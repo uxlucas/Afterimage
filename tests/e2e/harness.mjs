@@ -1,6 +1,5 @@
 // The end-to-end check every example is held to: build it with its own scripts, serve the output, and drive the
-// real viewer in Chrome. Task by task, new framework examples reuse checkExample, with an option only where an app
-// needs one.
+// real viewer in Chrome. Every framework example reuses checkExample, with an option only where an app needs one.
 //
 // It waits on signals the page gives (a frame's load, the change list rendering), never on fixed sleeps, with one
 // exception: showing that the live review did not store a count needs a wait past its longest delay.

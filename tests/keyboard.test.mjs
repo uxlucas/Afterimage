@@ -10,7 +10,7 @@ const key = (value, extra = {}) => ({
 const keyup = (value, extra = {}) => key(value, { type: 'keyup', ...extra });
 const input = type => ({ tagName: 'INPUT', ...(type === undefined ? {} : { type }) });
 
-test('shortcutFor maps the spec keys to actions', () => {
+test('shortcutFor maps each shortcut key to its action', () => {
   assert.deepEqual(shortcutFor(key('[')), { type: 'stepVersion', delta: -1 });
   assert.deepEqual(shortcutFor(key(']')), { type: 'stepVersion', delta: 1 });
   assert.equal(shortcutFor(key('g')), 'focusVersion');
@@ -62,7 +62,7 @@ test('unmapped keys return null', () => {
   assert.equal(shortcutFor(key('{')), null);
 });
 
-test('text fields block every shortcut (Ruling 18)', () => {
+test('text fields block every shortcut', () => {
   for (const target of [
     input('text'), input('email'), input('password'), input('search'), input('number'), input('tel'), input('url'), input(undefined),
     { tagName: 'TEXTAREA' }, { tagName: 'SELECT' }, { tagName: 'DIV', isContentEditable: true },
@@ -243,7 +243,7 @@ const envOf = (state = {}, extra = {}) => ({
 });
 const gone = { consumed: false, dispatch: [], effect: null };
 
-test('Esc closes whatever is on top, in order: sheet, panel, compare, then nothing (Ruling 19)', () => {
+test('Esc closes whatever is on top, in order: sheet, panel, compare, then nothing', () => {
   const all = envOf({ panelOpen: true, mode: 'compare' }, { helpOpen: true });
   assert.deepEqual(resolveShortcut('escape', all), { consumed: true, dispatch: [], effect: 'closeHelp' });
   const noSheet = envOf({ panelOpen: true, mode: 'compare' });
@@ -320,7 +320,7 @@ test('V closing the panel from inside it hands focus back like Esc; from elsewhe
   assert.equal(resolveShortcut(v, envOf({ panelOpen: false }, { focusInPanel: true })).effect, 'togglePanel');
 });
 
-test('bindFrames skips a cross-origin frame and survives one that went cross-origin while bound (C2)', () => {
+test('bindFrames skips a cross-origin frame and survives one that went cross-origin while bound', () => {
   const crossWindow = new EventTarget();
   Object.defineProperty(crossWindow, 'document', { get() { throw new Error('SecurityError'); } });
   crossWindow.addEventListener = () => { throw new Error('SecurityError'); };

@@ -131,7 +131,7 @@ export function bindShortcuts(targetWindow, handle) {
   targetWindow.addEventListener('keyup', onKey);
   targetWindow.addEventListener('blur', onLeave);
   doc?.addEventListener('visibilitychange', onLeave);
-  // A frame's window can turn cross-origin while bound (C2); removing listeners from it then throws.
+  // A frame's window can turn cross-origin while bound; removing listeners from it then throws.
   return () => {
     quietly(() => targetWindow.removeEventListener('keydown', onKey));
     quietly(() => targetWindow.removeEventListener('keyup', onKey));

@@ -147,7 +147,7 @@ export default function HighlightSegment({ state, dispatch, review, disabled, ph
     const slot = `${digitsOf(shownTotal ?? 0)}ch`;
     const position = ready && state.changeIndex !== null ? state.changeIndex + 1 : '–';
     const canStep = ready && total > 0;
-    // Under a filter the stepper says which (Ruling 26). The word is fixed while stepping, so the width holds.
+    // Under a filter the stepper says which. The word is fixed while stepping, so the width holds.
     const word = filterWord(state.changeFilter);
     content = (
       <Swap key="steps" {...swap}>

@@ -144,7 +144,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   const clipPath = useTransform(split, value => `inset(0 ${100 - value}% 0 0)`);
   const splitGoal = layout === 'wipe' && !state.peek ? wipe : 100;
   const splitAnimation = useRef(null);
-  const glideSplit = useRef(false); // set when the divider moves itself to show a change (Ruling 25)
+  const glideSplit = useRef(false); // set when the divider moves itself to show a change
   useLayoutEffect(() => {
     splitAnimation.current?.stop();
     const glide = (switching || glideSplit.current) && t.layout.duration > 0;
@@ -345,7 +345,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   }, [targetRef, baseRef]);
 
   // The base frame appears in place: same scroll position as the target, put back when it hides again.
-  // Either frame may have gone cross-origin (C2): then there is nothing to align, and nothing to put back.
+  // Either frame may have gone cross-origin: then there is nothing to align, and nothing to put back.
   useLayoutEffect(() => {
     if (!peekInPlace) return undefined;
     const baseWin = frameWindow(baseRef.current), targetWin = frameWindow(targetRef.current);
@@ -356,7 +356,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   }, [peekInPlace, baseRef, targetRef]);
 
   // Stepping to a change scrolls the frame that holds it so the region sits in the middle. An explicit pick
-  // (a row or a badge) scrolls again even when it picks the change already selected (I4); J/K steps don't count
+  // (a row or a badge) scrolls again even when it picks the change already selected; J/K steps don't count
   // as picks, so they behave as before.
   const scrolledFor = useRef(null);
   useEffect(() => {

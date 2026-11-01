@@ -16,7 +16,7 @@ const generatedNames = [
   // (svelte/src/utils.js), 1 to 7 characters. Below 5 too many words would match (svelte-logo).
   /^svelte-[a-z0-9]{5,7}$/,
   // Astro scoped styles with scopedStyleStrategy "class" or "where": class="astro-yk4hkwyg". Checked on astro 7.4.4,
-  // where it is eight lowercase characters. The brief's astro-ABC123de is mixed case, as older Astro wrote it.
+  // where it is eight lowercase characters. Older Astro wrote them in mixed case (astro-ABC123de), so both match.
   /^astro-[A-Za-z0-9]{8}$/,
   // Vite CSS modules: _card_13qjp_1. Checked in vite 8.3.5 (generateScopedNameDefault): `_${name}_${hash}_${line}`,
   // with the hash string-hash(css).toString(36).substr(0, 5), so lowercase base 36. The name is a CSS identifier.

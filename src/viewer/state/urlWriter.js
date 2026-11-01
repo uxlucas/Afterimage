@@ -1,6 +1,6 @@
 // Writes the view into the address bar. Pure: history, location and the timer functions are passed in.
 // Safari and Firefox throw a SecurityError past their replaceState rate limits (holding J or ], scrubbing),
-// and an uncaught throw in a React effect takes the whole app down. So (Ruling 27):
+// and an uncaught throw in a React effect takes the whole app down. So:
 // - writes coalesce into one trailing write every `delayMs`, carrying the latest search;
 // - a write that matches the address bar is skipped;
 // - the write itself is wrapped, and the hash is kept.

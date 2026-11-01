@@ -109,7 +109,7 @@ export default function ChangeList({ state, dispatch, review, baseLabel, targetL
   const pick = index => {
     if (!state.highlights) dispatch({ type: 'toggleHighlights' });
     // On a phone the sheet would cover the region, so it closes first; the pill's stepper takes over from here.
-    // It closes the Dock's way, so focus goes back to the pill instead of dropping to the page (Ruling 23).
+    // It closes the Dock's way, so focus goes back to the pill instead of dropping to the page.
     if (phone) onClose({ refocus: true });
     dispatch({ type: 'selectChange', index });
   };

@@ -88,7 +88,7 @@ test('selecting a version newer than the base keeps the base', () => {
   assert.equal(state.baseId, 'v1');
 });
 
-// Ruling 11: the baseline is always older than the target.
+// The baseline is always older than the target.
 test('selecting a version older than the base moves the base to its previous version', () => {
   let state = run(start(), { type: 'setMode', mode: 'compare' });
   assert.equal(state.baseId, 'v4');
@@ -153,7 +153,7 @@ test('setBase outside compare does nothing', () => {
   assert.equal(run(state, { type: 'setBase', id: 'v1' }), state);
 });
 
-// Ruling 12: a second Compare press keeps the chosen base.
+// A second Compare press keeps the chosen base.
 test('setMode compare while already comparing returns the same state', () => {
   let state = run(start(), { type: 'setMode', mode: 'compare' });
   state = run(state, { type: 'setBase', id: 'v2' });
@@ -248,7 +248,7 @@ test('setPeek to what it already is returns the same state', () => {
 
 // ---- final review fixes ----
 
-test('clampChange drops a change number past the list, but only once the review is ready (I3)', () => {
+test('clampChange drops a change number past the list, but only once the review is ready', () => {
   assert.equal(clampChange(98, 15, 'ready'), null, '?change=99 with 15 changes');
   assert.equal(clampChange(15, 15, 'ready'), null);
   assert.equal(clampChange(14, 15, 'ready'), 14);
@@ -269,7 +269,7 @@ test('clampChange as an action leaves the state alone when nothing is out of ran
   assert.equal(run(state, { type: 'clampChange', total: 0, status: 'checking' }), state);
 });
 
-test('picking a change counts every pick, the same one again too; J/K steps do not (I4)', () => {
+test('picking a change counts every pick, the same one again too; J/K steps do not', () => {
   const picked = run(start(), { type: 'selectChange', index: 2 });
   const again = run(picked, { type: 'selectChange', index: 2 });
   assert.equal(again.changeIndex, 2);
@@ -279,7 +279,7 @@ test('picking a change counts every pick, the same one again too; J/K steps do n
   assert.equal(stepped.pick, again.pick, 'a step is not a pick');
 });
 
-test('crossing to phone with both folders open keeps one (the spec: one at a time on phone)', () => {
+test('crossing to phone with both folders open keeps one, since a phone shows one at a time', () => {
   const both = { ...start(), folders: { versions: true, changes: true } };
   assert.deepEqual(run(both, { type: 'oneFolder' }).folders, { versions: false, changes: true });
   const one = { ...start(), folders: { versions: true, changes: false } };

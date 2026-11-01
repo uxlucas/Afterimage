@@ -20,7 +20,7 @@ export function linkScroll(frameA, frameB, { enabled = true } = {}) {
   const expected = new WeakMap(); // window -> the top we last moved it to
   let listening = [];
 
-  // A frame that went cross-origin (C2) has no window we may read; it just stops following.
+  // A frame that went cross-origin has no window we may read; it just stops following.
   const windowOf = frame => {
     const win = frameWindow(frame);
     return win?.document.documentElement ? win : null;

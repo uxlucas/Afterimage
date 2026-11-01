@@ -4,7 +4,7 @@ import { useTransitions } from './motion.js';
 import { useReducedMotion } from './hooks/useMedia.js';
 import './shortcuts.css';
 
-// The spec's list, grouped by what you are doing. Strings are the spec's.
+// Every shortcut, grouped by what you are doing.
 const GROUPS = [
   {
     name: 'Versions',

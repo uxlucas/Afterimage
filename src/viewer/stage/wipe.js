@@ -9,7 +9,7 @@ const MARGIN_PX = 16; // "just past the region": far enough that its outline cle
 const clamp = value => Math.min(MAX, Math.max(MIN, value));
 
 // Where the divider should go (percent of the stage showing Before) so a stepped-to or picked region is on its
-// own side (Ruling 25). Returns `wipe` unchanged when the region's centre is already visible.
+// own side. Returns `wipe` unchanged when the region's centre is already visible.
 //   rect: the region in its frame's page coordinates; width: the stage width (the frame's viewport in the wipe).
 export function wipeToShow({ wipe, kind, rect, width, scrollX = 0 }) {
   if (!(width > 0) || !rect) return wipe;

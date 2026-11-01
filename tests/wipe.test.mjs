@@ -7,7 +7,7 @@ import { filterWord, stepperLabel } from '../src/viewer/pill/stepper.js';
 const W = 1000;
 const rect = (x, width) => ({ x, y: 300, width, height: 40 });
 
-test('an added region on the hidden (Before) side moves the divider just left of it (Ruling 25)', () => {
+test('an added region on the hidden (Before) side moves the divider just left of it', () => {
   // divider at 50%: an added region centred at 25% is under the Before layer
   const goal = wipeToShow({ wipe: 50, kind: 'added', rect: rect(200, 100), width: W });
   assert.ok(goal < 20 && goal > 15, `goal ${goal}`);
@@ -76,7 +76,7 @@ test('a narrow visible part puts the card below the region, inside that part', (
   assert.ok(left >= 8 && left + 196 <= 240, `card spans ${left}..${left + 196}`);
 });
 
-test('the pill names a filter that is not All (Ruling 26)', () => {
+test('the pill names a filter that is not All', () => {
   assert.equal(filterWord('all'), '');
   assert.equal(filterWord('added'), 'added');
   assert.equal(filterWord('removed'), 'removed');

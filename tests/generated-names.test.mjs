@@ -17,7 +17,7 @@ test('names a framework build generates are recognised', () => {
 
 test('names an author wrote are not', () => {
   for (const name of [
-    'card', 'btn-primary', 'mt-4', 'h-10', 'grid-cols-3', 'v2-banner', // the brief's list
+    'card', 'btn-primary', 'mt-4', 'h-10', 'grid-cols-3', 'v2-banner', // plain hand-written names
     'md:grid-cols-2', 'hover:bg-blue-500', 'w-1/2', 'text-[13px]', '-mt-2', // Tailwind
     'card__title--active', 'card--featured', 'block__elem_mod_val', // BEM
     '_header_nav', '_button_primary', '_layout_grid', '_active_link', '_mobile_menu', '_Button_primary', '_Footer_links', // leading underscore, snake case

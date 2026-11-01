@@ -135,7 +135,7 @@ export default function App({ versions }) {
   const baseRef = useRef(null);
   const phone = usePhone();
 
-  // The address bar follows the view, coalesced and guarded (Ruling 27): a rate-limited replaceState must never
+  // The address bar follows the view, coalesced and guarded: a rate-limited replaceState must never
   // throw out of this effect, which would take the app down.
   const search = toSearch(state, versions);
   useEffect(() => { urlWriter.write(search); }, [search]);
@@ -150,7 +150,7 @@ export default function App({ versions }) {
   const base = comparisonBase(versions, state);
   const review = useReview({ targetFrame: targetRef, baseFrame: baseRef, target, base, enabled: base != null });
 
-  // A change number past the list (?change=99) selects nothing once the review knows the list (I3).
+  // A change number past the list (?change=99) selects nothing once the review knows the list.
   const filteredTotal = useMemo(() => filterEntries(review.entries, state.changeFilter).length, [review.entries, state.changeFilter]);
   useLayoutEffect(() => {
     dispatch({ type: 'clampChange', total: filteredTotal, status: review.status });

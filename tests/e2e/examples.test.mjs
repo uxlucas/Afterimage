@@ -115,7 +115,7 @@ test('sveltekit-static: both prerendered routes render inside the viewer, and th
   await assertRootUntouched(dir, 'build');
 });
 
-// Stands in for a Vercel or Netlify deployment until a real preview can be tried (spec criterion 3): a fresh copy of the
+// Stands in for a Vercel or Netlify deployment until a real preview can be tried: a fresh copy of the
 // built site, in a folder with a space in its name, on an unexpected port, served by a host that maps paths straight to
 // files. The first test is the main one. The rest show the worker's clean-URL fallback doing its job on a host that has
 // no clean URLs of its own: Next's about.html and SvelteKit's about.html have to be found by the worker on this host. Astro's

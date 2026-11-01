@@ -1,7 +1,7 @@
 // Safe access to a prototype frame's window. Pure enough for node:test: it only reads what it is given.
 // A prototype frame can navigate anywhere (an external link, a site that refuses framing, a browser error page).
 // Once it is cross-origin, reading its document, its scroll position or its location, or adding a listener to
-// it, throws a SecurityError. Every frame-window touch goes through `frameWindow` first (Ruling 27).
+// it, throws a SecurityError. Every frame-window touch goes through `frameWindow` first.
 
 // The frame's window if it is same-origin right now, else null.
 export function frameWindow(frame) {
@@ -15,7 +15,7 @@ export function frameWindow(frame) {
 }
 
 // Origin, path and query of a URL: what decides which document a frame holds. The hash is left out, so an
-// anchor link or a hash router inside the prototype still counts as the same page (I1).
+// anchor link or a hash router inside the prototype still counts as the same page.
 export function withoutHash(href) {
   try {
     const url = new URL(href);

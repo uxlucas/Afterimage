@@ -1,6 +1,6 @@
 // The highlight stepper's words. Pure, for node:test.
 // Under a filter other than All, the stepper names it ("Change 1 of 2 added"), so its count can't be read as
-// the whole list's (Ruling 26).
+// the whole list's.
 
 const WORDS = { changed: 'changed', added: 'added', removed: 'removed' };
 

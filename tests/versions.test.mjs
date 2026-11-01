@@ -187,7 +187,7 @@ test('parseVersionInput names the single version when only one fits', () => {
   assert.deepEqual(parseVersionInput('2', olderThan(versions, 'v2')), { ok: false, hint: 'Pick 1' });
 });
 
-// Ruling 16: scrubbing the target in Compare never moves the baseline.
+// Scrubbing the target in Compare never moves the baseline.
 test('clampTarget keeps the target newer than the base', () => {
   const versions = makeVersions(10);
   assert.equal(clampTarget(versions, 'v9', 'v5'), 'v9');
@@ -204,7 +204,7 @@ test('clampBase keeps the base older than the target', () => {
   assert.equal(clampBase(versions, 'v2', 'v1'), null);
 });
 
-// Ruling 17: in Compare the base always shows.
+// In Compare the base always shows.
 test('tickWindow pins a base outside the window as the first tick, with a gap after it', () => {
   const window = tickWindow(makeVersions(60), 'v60', 'v40');
   assert.deepEqual(numbers(window.ticks), [40, ...Array.from({ length: 11 }, (_, i) => 50 + i)]);

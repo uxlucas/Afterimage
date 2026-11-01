@@ -47,7 +47,7 @@ export function reviewSignature({ entries, comparison }) {
 
 // Runs `fn` once things go quiet for `waitMs`, but never later than `maxWaitMs` after the first call it is
 // holding back. A prototype that mutates continuously (a JS animation) would otherwise starve a plain trailing
-// debounce, and the review would time out as "Couldn't check" (I2). Timer functions are injectable for tests.
+// debounce, and the review would time out as "Couldn't check". Timer functions are injectable for tests.
 export function createDebounce(fn, { waitMs = 80, maxWaitMs = 500 } = {}, { setTimeout: set = globalThis.setTimeout, clearTimeout: clear = globalThis.clearTimeout } = {}) {
   let trailing = null;
   let deadline = null;

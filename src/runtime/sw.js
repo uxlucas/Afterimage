@@ -3,8 +3,8 @@
 // Approach: each saved page carries frame.js (added at save time), which rewrites the frame's URL with replaceState
 // from /afterimage/versions/vN/<path> to /<path>, so the app's router sees its own paths. Built apps also ask for
 // root paths (/assets/x.js, /_next/...). This worker answers those from the version's folder. Nothing in it knows
-// any framework. The alternatives in the spec (a relative base set through the framework's config, rewriting paths
-// at save time) need per-framework work and miss URLs built at runtime, so they were not used.
+// any framework. The alternatives (a relative base set through the framework's config, rewriting paths at save
+// time) need per-framework work and miss URLs built at runtime, so they were not used.
 //
 // A classic worker, not a module one, so it runs wherever service workers do. It cannot import map.js (an ES module
 // that history.js uses in node), so the three helpers below are an inline copy; tests/runtime.test.mjs runs the same

@@ -17,7 +17,7 @@ test('empty search is the latest version in explore with no base', () => {
   assert.deepEqual(parseUrl('', versions), { versionId: 'v2', mode: 'explore', baseId: null });
 });
 
-// Ruling 13: the baseline is always older, so a reversed pair is read the right way round.
+// The baseline is always older, so a reversed pair is read the right way round.
 test('a compare link with a newer baseline swaps the pair', () => {
   assert.deepEqual(parseUrl('?version=v1&mode=compare&base=v2', versions), { versionId: 'v2', mode: 'compare', baseId: 'v1' });
 });
