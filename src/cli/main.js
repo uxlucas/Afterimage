@@ -4,7 +4,8 @@ import * as build from './commands/build.js';
 import * as dev from './commands/dev.js';
 import { isUserError } from './errors.js';
 
-// One entry per command. Each module exports run(args, ctx) → exit code, a one-line usage, a summary and its options.
+// One entry per command. Each module exports run(args, ctx) → exit code, a one-line usage, a summary, its help (what
+// both "afterimage help <command>" and "<command> --help" print) and its options.
 export const commands = { init, save, dev, build };
 
 function overview() {
@@ -30,7 +31,7 @@ export async function main(argv, ctx) {
       stderr.write(`Unknown command "${rest[0]}".\n\n${overview()}`);
       return 2;
     }
-    stdout.write(`Usage: ${command.usage}\n\n${command.summary}\n`);
+    stdout.write(command.help);
     return 0;
   }
   if (!Object.hasOwn(commands, first)) {

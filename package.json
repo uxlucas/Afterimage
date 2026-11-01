@@ -1,7 +1,7 @@
 {
   "name": "afterimage-cli",
   "version": "0.1.0",
-  "description": "A version-history viewer for prototypes.",
+  "description": "A version history for prototypes, deployed with the prototype itself.",
   "license": "MIT",
   "keywords": [
     "version-history",
@@ -38,6 +38,7 @@
     "viewer-dist",
     "agents",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

@@ -4,7 +4,7 @@
 npx afterimage build
 ```
 
-`build` writes one static site to `.afterimage/site/`: your app at the root, exactly as its own build makes it, and the history at `/afterimage/`, with the viewer and every saved version. Any static host can serve it. On Vercel and Netlify you don't run it yourself: the config `init` wrote has the host run the same build on every deploy.
+`build` writes one static site to `.afterimage/site/`: your app at the root, exactly as its own build makes it, and the history at `/afterimage/`, with the viewer and every saved version. Serve it from the root of a domain, on a static host that meets [the requirements below](#other-static-hosts). On Vercel and Netlify you don't run it yourself: the config `init` wrote has the host run the same build on every deploy.
 
 > The host settings on this page come from the hosts' documentation and from reading their build tools' source code. The tests check them against a local static server, but they haven't been checked on a real Vercel or Netlify deployment yet. [checking-a-deploy.md](checking-a-deploy.md) is the procedure for that.
 
@@ -119,6 +119,6 @@ Vercel builds a preview for every branch you push, and Netlify builds a deploy p
 
 ## Service workers
 
-Built apps load their files from root paths, such as `/assets/index.js` or `/_next/static/...`. Inside the viewer a version lives at `/afterimage/versions/v2/`, so those paths would reach the live app. A service worker, served at `/afterimage/sw.js`, answers them from the version's own folder instead. Each saved page also moves its own address to the app's path, `/about` instead of `/afterimage/versions/v2/about`, so the app's router sees the paths it expects, and the worker maps what the page asks for back into the version.
+Built apps load their files from root paths, such as `/assets/index.js` or `/_next/static/...`. Inside the viewer a version lives at `/afterimage/versions/v2/`, so those paths would reach the live app. A service worker, served at `/afterimage/sw.js`, answers them from the version's own folder instead. In a frame the worker controls, each saved page also moves its own address to the app's path, `/about` instead of `/afterimage/versions/v2/about`, so the app's router sees the paths it expects, and the worker maps what the page asks for back into the version.
 
-Browsers only run service workers on https and on localhost, which is why the history needs https once it is deployed. `afterimage dev` serves on localhost, so it works while you build. Without a worker (plain http on a public address, or a host that won't serve `sw.js` as JavaScript) the viewer still opens, but a version asks the live app for its files, and a built app can show up unstyled.
+Browsers only run service workers on https and on localhost, which is why the history needs https once it is deployed. `afterimage dev` serves on localhost, so it works while you build. Without a worker (plain http on a public address, or a host that won't serve `sw.js` as JavaScript) the viewer still opens, and each page keeps its own address in the version folder. Files it names with relative paths, such as `style.css`, still load from the version, so plain HTML shows as saved. Root paths reach the live app instead, so a built app can show up unstyled, and its router, which sees `/afterimage/versions/v2/` instead of `/`, can show its not-found page.

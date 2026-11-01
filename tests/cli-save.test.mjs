@@ -152,6 +152,22 @@ test('help lists the commands and unknown commands exit 2', async t => {
   assert.equal((await run(root, ['toString'])).code, 2);
 });
 
+test('"afterimage help <command>" prints exactly what "<command> --help" prints, for every command', async t => {
+  const root = await temp(t);
+  for (const name of ['init', 'save', 'dev', 'build']) {
+    const viaHelp = await run(root, ['help', name]);
+    const viaFlag = await run(root, [name, '--help']);
+    assert.equal(viaHelp.code, 0, name);
+    assert.equal(viaFlag.code, 0, name);
+    assert.equal(viaHelp.stdout, viaFlag.stdout, name);
+    assert.match(viaHelp.stdout, new RegExp(`^Usage: afterimage ${name}`));
+  }
+  // Each flag a command takes is described in its help.
+  assert.match((await run(root, ['help', 'init'])).stdout, /\n {2}--source[\s\S]*\n {2}--build[\s\S]*\n {2}--agent[\s\S]*\n {2}--no-input/);
+  assert.match((await run(root, ['help', 'save'])).stdout, /\n {2}--note/);
+  assert.match((await run(root, ['help', 'dev'])).stdout, /\n {2}--port/);
+});
+
 test('the afterimage binary prints help and lists save', () => {
   const bin = fileURLToPath(new URL('../bin/afterimage.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli/main.js';
+import { hostDocs } from '../src/cli/commands/build.js';
 import { writeConfig } from '../src/cli/config.js';
 import { readSnapshot, fingerprint } from '../src/cli/history.js';
 import { assembleSite, isSameOrInside } from '../src/cli/site.js';
@@ -75,7 +76,7 @@ test('build merges the app at the root and the history under /afterimage', async
   await fs.writeFile(path.join(root, 'dist/style.css'), 'body{}');
   const result = await run(root, ['build'], dirs);
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.stdout, 'Built .afterimage/site with 2 versions. Serve it from any static host; the history is at /afterimage/.\n');
+  assert.equal(result.stdout, `Built .afterimage/site with 2 versions. The history is at /afterimage/.\nServe it from the root of a domain, on a static host that does what ${hostDocs} lists.\n`);
 
   const site = path.join(root, '.afterimage/site');
   assert.deepEqual((await fs.readdir(site)).sort(), ['afterimage', 'assets', 'index.html', 'style.css']);

@@ -6,15 +6,19 @@
   const version = document.currentScript?.dataset.afterimageVersion;
   const prefix = `/afterimage/versions/${version}`;
   if (!version || !location.pathname.startsWith(`${prefix}/`)) return;
-  // The viewer reads this to tell which version a frame holds, since the URL below no longer says.
+  // The viewer reads this to tell which version a frame holds, since the URL below may no longer say.
   window.__afterimageVersion = version;
 
   // The app's own path at the root, so its router matches: .../vN/index.html -> /, .../vN/about/index.html -> /about/,
   // .../vN/two.html -> /two.html. Relative URLs now resolve against it too; the worker maps the result back.
-  const own = location.pathname.slice(prefix.length).replace(/(^|\/)index\.html$/, '$1');
+  // Only a frame the worker controls is moved. Without one (no service workers on plain http, a host that won't serve
+  // sw.js) nothing would map root paths back, so the page keeps its own URL and its relative files still load from
+  // the version folder.
+  const mapped = Boolean(window.navigator?.serviceWorker?.controller);
+  const own = mapped ? location.pathname.slice(prefix.length).replace(/(^|\/)index\.html$/, '$1') : location.pathname;
   // The file this document was loaded from, so the viewer can tell its own page from one reached by a hard link.
   window.__afterimageFile = location.pathname;
-  history.replaceState(history.state, '', own + location.search + location.hash);
+  if (mapped) history.replaceState(history.state, '', own + location.search + location.hash);
 
   // The page the viewer compares: the frame's path as the app leaves it on its own. An app that redirects on load
   // (replaceState to /home, / to /en) settles there. The person's first press or key inside the frame freezes it, so

@@ -119,11 +119,38 @@ test('sveltekit with adapter-static reads the pages option', async t => {
   }, { type: 'sveltekit-static', source: 'public-site', build: 'npm run build' });
 });
 
-test('sveltekit without adapter-static is unknown', async t => {
-  const found = await detect(t, {
-    'package.json': pkg({}, { '@sveltejs/kit': '^2.0.0', '@sveltejs/adapter-auto': '^3.0.0' })
-  }, { type: 'unknown', source: null, build: null });
-  assert.match(found.reason, /adapter-static/);
+test('sveltekit without adapter-static is sveltekit-server, with no static build to save', async t => {
+  for (const adapter of ['@sveltejs/adapter-auto', '@sveltejs/adapter-node', null]) {
+    const devDependencies = { '@sveltejs/kit': '^2.0.0', ...(adapter && { [adapter]: '^3.0.0' }) };
+    const found = await detect(t, { 'package.json': pkg({}, devDependencies) }, { type: 'sveltekit-server', source: null, build: null });
+    assert.match(found.reason, /no static build/);
+    assert.match(found.reason, /@sveltejs\/adapter-static/);
+  }
+});
+
+// Every Astro adapter builds for a server unless the config says output: 'static', as @astrojs/vercel does above.
+for (const [title, dependencies, config, named] of [
+  ['@astrojs/node and no config', { '@astrojs/node': '^9.0.0' }, null, /@astrojs\/node, a server adapter/],
+  ['@astrojs/netlify in the config', { '@astrojs/netlify': '^6.0.0' }, "import netlify from '@astrojs/netlify';\nexport default { adapter: netlify() };\n", /@astrojs\/netlify/],
+  ['an adapter it does not know by name', { 'astro-adapter-x': '1.0.0' }, "import x from 'astro-adapter-x';\nexport default defineConfig({ adapter: x(), output: 'server' });\n", /an adapter in the astro config/],
+  ["output: 'server' and no adapter", {}, "export default { output: 'server' };\n", /output: 'server'/]
+]) {
+  test(`astro with ${title} is astro-server`, async t => {
+    const files = { 'package.json': pkg({ astro: '^5.0.0', ...dependencies }) };
+    if (config) files['astro.config.mjs'] = config;
+    const found = await detect(t, files, { type: 'astro-server', source: null, build: null });
+    assert.match(found.reason, named);
+    assert.match(found.reason, /no static build/);
+  });
+}
+
+test("astro with any adapter and output: 'static' builds to dist", async t => {
+  for (const adapter of ['@astrojs/node', '@astrojs/netlify']) {
+    await detect(t, {
+      'package.json': pkg({ astro: '^5.0.0', [adapter]: '^1.0.0' }),
+      'astro.config.mjs': `import adapter from '${adapter}';\nexport default { output: 'static', adapter: adapter() };\n`
+    }, { type: 'astro', source: 'dist', build: 'npm run build' });
+  }
 });
 
 test('a package.json with no known framework is unknown', async t => {

@@ -6,6 +6,8 @@ import { runBuild } from '../run-build.js';
 
 export const usage = 'afterimage save "Name" [--note "..."]';
 export const summary = 'Build the prototype and save it as the next version.';
+// What both "afterimage save --help" and "afterimage help save" print.
+export const help = `Usage: ${usage}\n\n${summary}\n\n  --note "..."  a note on the version, up to 500 characters; repeat it for more than one\n`;
 // Read by the docs tests, which check every flag the agent files name.
 export const options = { note: { type: 'string', multiple: true }, help: { type: 'boolean', short: 'h' } };
 
@@ -19,7 +21,7 @@ export async function run(args, { cwd, stdout, stderr, buildStdio }) {
     return 2;
   }
   if (parsed.values.help) {
-    stdout.write(`Usage: ${usage}\n\n${summary}\n`);
+    stdout.write(help);
     return 0;
   }
   const [name, ...extra] = parsed.positionals;

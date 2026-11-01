@@ -52,7 +52,9 @@
 // - Hosts that answer a missing file with 403 instead of 404 (S3 and similar object stores) get no clean-URL
 //   fallback: /about stays a 404 inside a version when only about.html exists (a miss, not the live app).
 // - Without service workers (http on a non-localhost address, a host that does not serve sw.js as JavaScript) the
-//   viewer still renders, and a built app that uses root paths renders unstyled.
+//   viewer still renders. frame.js then leaves each page at its own URL, so relative files load from the version,
+//   but root paths (/assets/x.js) reach the live app: a built app renders unstyled, and its router sees
+//   /afterimage/versions/vN/... instead of its own paths.
 // And one that comes with versions sharing the live app's origin: an old version's code runs there. It can register
 // a worker at scope / (its register('/sw.js') resolves against the root) and write cookies, localStorage and
 // IndexedDB that the live app then reads.

@@ -9,7 +9,7 @@ afterimage dev [--port N]
 afterimage build
 ```
 
-`npx afterimage --help` lists them, and `npx afterimage help <command>` or `--help` after a command shows one. `-h` is the same as `--help`.
+`npx afterimage --help` lists them. `npx afterimage help <command>` and `--help` after a command print the same help for one command, with its flags. `-h` is the same as `--help`.
 
 ## init
 
@@ -27,7 +27,7 @@ Sets up Afterimage in the project: config, scripts, git rules and host config.
 | `--agent cursor` | Also copies the same instructions as a rule to `.cursor/rules/afterimage.mdc`, for Cursor. |
 | `--no-input` | Asks nothing, even in a terminal. Where init would have asked, it stops with a message or prints what is left for you to do. |
 
-Without `--source`, init detects the prototype; [getting-started.md](getting-started.md#2-set-up-the-project) has the table. When it can't, it asks in a terminal, and otherwise stops with `Say where the prototype is: afterimage init --source <folder>`. A project with no static build to save (Next.js without `output: 'export'`, Astro with a server adapter, SvelteKit without `@sveltejs/adapter-static`) stops with a message that says `no static build` and what to change.
+Without `--source`, init detects the prototype; [getting-started.md](getting-started.md#2-set-up-the-project) has the table. When it can't, it asks in a terminal, and otherwise stops with `Say where the prototype is: afterimage init --source <folder>`. A project with no static build to save stops, even in a terminal, with a message that says `no static build` and what to change: Next.js without `output: 'export'`, Astro with an adapter (or `output: 'server'`) but without `output: 'static'`, and SvelteKit without `@sveltejs/adapter-static`. With `--source`, init takes the folder you name instead.
 
 It writes:
 
@@ -60,7 +60,7 @@ Builds the prototype and saves it as the next version.
 - The version goes to `afterimage/versions/vN/`, and `afterimage/versions.json` lists it first. On success it prints `Saved v4 "Remember me".`
 - If the prototype is the same as the latest version, it prints `Nothing changed since v3 "Passkeys". Nothing was saved.` and exits 0.
 - It checks every saved version against its fingerprint first, and stops if one was edited.
-- One save runs at a time. A second one stops with a message rather than waiting.
+- One save runs at a time. While a save runs it holds `.afterimage-save.lock` in the history folder, and a second save stops with `Another save is active.` rather than waiting. A save that fails removes the lock itself. If a save was killed and left the lock behind, delete `afterimage/.afterimage-save.lock` once no save is running.
 - If the prototype changes while it is being saved, the save stops and saves nothing. Run it again once editing stops.
 
 ### What a save keeps
@@ -108,7 +108,7 @@ Builds the prototype and writes the deployable site with the history at `/afteri
 - It stops if the app has its own top-level `afterimage` file or folder, since the history is served there.
 - The previous site stays in place until the new one is complete, so a failed build leaves it as it was.
 - With no saved versions it stops with `Save a first version with: afterimage save "Name"`.
-- On success it prints `Built .afterimage/site with 2 versions. Serve it from any static host; the history is at /afterimage/.`
+- On success it prints `Built .afterimage/site with 2 versions. The history is at /afterimage/.` and a line that links to the host requirements in [deploying.md](deploying.md#other-static-hosts): the site has to be served from the root of a domain.
 
 ## Exit codes
 

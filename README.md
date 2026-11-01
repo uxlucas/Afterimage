@@ -25,7 +25,7 @@ npx afterimage init --source dist --build "npm run build"
 
 ## Setup prompt
 
-Working with Claude Code, Cursor or another coding agent? Paste the setup prompt from [docs/agents.md](docs/agents.md) instead. It installs Afterimage, runs `init` with `--agent claude` or `--agent cursor` (which copies Afterimage's instructions into the project, where your agent reads them) and `--no-input` (so init never waits on a question), saves a first version and gives you the viewer's link. After that, "save a version called Remember me" works in plain words.
+Working with Claude Code, Cursor or another coding agent? Paste the setup prompt from [docs/agents.md](docs/agents.md) instead. It installs Afterimage and runs `init` with `--agent claude` or `--agent cursor`, which copies Afterimage's instructions into the project, where your agent reads them. It also passes `--no-input`, so init never waits on a question. Then it saves a first version and gives you the viewer's link. After that, "save a version called Remember me" works in plain words.
 
 ## Usage
 
@@ -54,17 +54,19 @@ Commit `afterimage/` with the rest of the project. It holds every saved version,
 npx afterimage build
 ```
 
-This writes `.afterimage/site/`: your app at the root, as its own build makes it, and the history at `/afterimage/`. It runs on any static host.
+This writes `.afterimage/site/`: your app at the root, as its own build makes it, and the history at `/afterimage/`. Serve it from the root of a domain, on any static host that meets [the requirements](docs/deploying.md#other-static-hosts).
 
 On Vercel and Netlify you don't run it yourself. The `vercel.json` and `netlify.toml` that `init` wrote tell the host to run the same build, so a push deploys both. Every preview deployment carries the live prototype and the versions saved on its branch. [docs/deploying.md](docs/deploying.md) covers each host, other static hosts and what init changes for them.
 
 ## Limits
 
-- Static output only. Apps that render pages on a server aren't supported: Next.js without `output: 'export'`, Astro with a server adapter, SvelteKit without `@sveltejs/adapter-static`.
-- Versions load through a service worker, so the history needs https, or localhost while you work. Without one, a built app inside the viewer can show up unstyled.
+- Static output only. Apps that render pages on a server aren't supported: Next.js without `output: 'export'`, Astro with an adapter but without `output: 'static'`, SvelteKit without `@sveltejs/adapter-static`.
+- The site has to be served from the root of its domain, since the history is always at `/afterimage/`. A site under a sub-path, such as a GitHub Pages project site, doesn't work.
+- Versions load through a service worker, so the history needs https, or localhost while you work. Without one, plain HTML with relative paths still shows, but a built app inside the viewer can show up unstyled or on its own not-found page.
 - Every saved version is public. Each one deploys with your site, and there is no command to take one back, so save only what you'd show.
 - An old version's code runs on your live site's address, so it can read and change the cookies and storage your live app uses.
 - A few ways of leaving a page inside a version open the live app instead, such as reloading the frame from the browser's menu or a link that opens a new tab.
+- The viewer has been tested in Chrome only so far. Firefox and Safari haven't been tested yet.
 
 [docs/limits.md](docs/limits.md) has the full list.
 

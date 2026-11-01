@@ -374,6 +374,43 @@ test('an existing netlify.toml of a Next.js project is told about the runtime se
   assert.doesNotMatch((await run(root)).stdout, /netlify/);
 });
 
+// Like Next.js without a static export: init stops, even in a terminal, and asks nothing.
+test('SvelteKit without adapter-static stops init with what to change, and asks no question', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ devDependencies: { '@sveltejs/kit': '2.0.0', '@sveltejs/adapter-auto': '3.0.0' } }));
+  const before = await snapshot(root);
+  const result = await run(root, [], { answers: ['build'] });
+  assert.equal(result.code, 1);
+  assert.deepEqual(result.questions, []);
+  assert.match(result.stderr, /no static build/);
+  assert.match(result.stderr, /Set the adapter in svelte\.config to @sveltejs\/adapter-static/);
+  assert.doesNotMatch(result.stderr, /Say where the prototype is/);
+  assert.deepEqual(await snapshot(root), before);
+  // A folder a build writes still goes through.
+  await fs.mkdir(path.join(root, 'static-out'));
+  assert.equal((await run(root, ['--source', 'static-out'])).code, 0);
+});
+
+test('Astro with another adapter stops init the same way, without the Vercel advice', async t => {
+  const root = await temp(t);
+  await write(root, 'package.json', JSON.stringify({ dependencies: { astro: '5.0.0', '@astrojs/node': '9.0.0' } }));
+  await write(root, 'astro.config.mjs', "import node from '@astrojs/node';\nexport default { adapter: node({ mode: 'standalone' }) };\n");
+  const before = await snapshot(root);
+  const result = await run(root, [], { answers: ['dist'] });
+  assert.equal(result.code, 1);
+  assert.deepEqual(result.questions, []);
+  assert.match(result.stderr, /@astrojs\/node, a server adapter/);
+  assert.match(result.stderr, /no static build/);
+  assert.match(result.stderr, /Set output: 'static' in the astro config and run "afterimage init" again/);
+  assert.doesNotMatch(result.stderr, /Vercel/);
+  assert.deepEqual(await snapshot(root), before);
+
+  await write(root, 'astro.config.mjs', "import node from '@astrojs/node';\nexport default { output: 'static', adapter: node({ mode: 'standalone' }) };\n");
+  const saved = await run(root);
+  assert.equal(saved.code, 0, saved.stderr);
+  assert.equal((await readConfig(root)).source, 'dist');
+});
+
 test('Astro with the Vercel adapter has no static build unless the config says output: static', async t => {
   const root = await temp(t);
   await write(root, 'package.json', JSON.stringify({ dependencies: { astro: '5.0.0', '@astrojs/vercel': '8.0.0' } }));

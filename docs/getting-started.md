@@ -40,7 +40,7 @@ npx afterimage init --source public
 npx afterimage init --source dist --build "npm run build"
 ```
 
-A project that needs a server to render its pages has nothing static to save. For Next.js without `output: 'export'`, SvelteKit without `@sveltejs/adapter-static`, and Astro with `@astrojs/vercel` but without `output: 'static'`, init stops and says what to change.
+A project that needs a server to render its pages has nothing static to save. For Next.js without `output: 'export'`, SvelteKit without `@sveltejs/adapter-static`, and Astro with an adapter but without `output: 'static'`, init stops and says what to change.
 
 Then it writes these files and lists each one it created or changed:
 

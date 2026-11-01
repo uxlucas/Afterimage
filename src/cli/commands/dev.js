@@ -9,6 +9,8 @@ import { fileFor, requestPath, sendFile } from '../static-files.js';
 
 export const usage = 'afterimage dev [--port N]';
 export const summary = 'Serve the saved history at /afterimage/ while your app runs on its own dev server.';
+// What both "afterimage dev --help" and "afterimage help dev" print.
+export const help = `Usage: ${usage}\n\n${summary}\n\n  --port N  the port to start from, 4321 by default; a busy one moves to the next free port\n`;
 // Read by the docs tests, which check every flag the agent files name.
 export const options = { port: { type: 'string' }, help: { type: 'boolean', short: 'h' } };
 
@@ -158,7 +160,7 @@ export async function run(args, { cwd, stdout, stderr, viewerDir, runtimeDir, si
     return 2;
   }
   if (parsed.values.help) {
-    stdout.write(`Usage: ${usage}\n\n${summary}\n`);
+    stdout.write(help);
     return 0;
   }
   let port = defaultPort;

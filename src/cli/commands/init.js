@@ -8,6 +8,8 @@ import { detectProject } from '../detect.js';
 
 export const usage = 'afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]';
 export const summary = 'Set up Afterimage in this project: config, scripts, git rules and host config.';
+// What both "afterimage init --help" and "afterimage help init" print.
+export const help = `Usage: ${usage}\n\n${summary}\n\n  --source <folder>      the folder that holds the prototype, or that your build writes to\n  --build "<command>"    the command that builds it, when there is one\n  --agent claude|cursor  also copy Afterimage's skill (Claude Code) or rule (Cursor) into this project\n  --no-input             ask nothing, even in a terminal, and print what is left to do instead\n`;
 // Read by the docs tests, which check every flag the agent files name.
 export const options = { source: { type: 'string' }, build: { type: 'string' }, agent: { type: 'string' }, 'no-input': { type: 'boolean' }, help: { type: 'boolean', short: 'h' } };
 
@@ -120,11 +122,14 @@ const needSource = reason => new Error(`${reason}\nSay where the prototype is: a
 // when a custom build produces it.
 async function chooseSetup(cwd, flags, { isTTY, ask }) {
   const detection = await detectProject(cwd);
-  // What would give the project a static build to save. For Astro that is only about saving: the adapter still writes
-  // .vercel/output, so deploying the history on Vercel needs it removed too (planVercel says so).
+  // What would give the project a static build to save. For Astro with @astrojs/vercel that is only about saving: the
+  // adapter still writes .vercel/output, so deploying the history on Vercel needs it removed too (planVercel says so).
   const serverFix = {
     'next-server': "output: 'export' in next.config",
-    'astro-server': "output: 'static' in the astro config (to save its static build; the history can only deploy on Vercel without @astrojs/vercel)"
+    'astro-server': await dependsOn(cwd, '@astrojs/vercel')
+      ? "output: 'static' in the astro config (to save its static build; the history can only deploy on Vercel without @astrojs/vercel)"
+      : "output: 'static' in the astro config",
+    'sveltekit-server': 'the adapter in svelte.config to @sveltejs/adapter-static (npm install -D @sveltejs/adapter-static)'
   }[detection.type];
   if (serverFix && !flags.source) {
     throw new Error(`${detection.reason}\nSet ${serverFix} and run "afterimage init" again, or pass --source <folder> if a build writes static files somewhere else.`);
@@ -448,7 +453,7 @@ export async function run(args, ctx) {
     return 2;
   }
   if (parsed.values.help) {
-    stdout.write(`Usage: ${usage}\n\n${summary}\n\n  --source <folder>      the folder that holds the prototype, or that your build writes to\n  --build "<command>"    the command that builds it, when there is one\n  --agent claude|cursor  also copy Afterimage's skill (Claude Code) or rule (Cursor) into this project\n  --no-input             ask nothing, even in a terminal, and print what is left to do instead\n`);
+    stdout.write(help);
     return 0;
   }
   const flags = { source: parsed.values.source, build: parsed.values.build };

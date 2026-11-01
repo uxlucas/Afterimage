@@ -39,6 +39,9 @@ async function detectPlain(projectDir, wrapped = false) {
   return unknown(wrapped ? 'Found a package.json with no framework and no build, and no index.html here.' : 'Found no package.json and no index.html here.');
 }
 
+// Astro's own server adapters, named in the message when the project depends on one.
+const astroAdapters = ['@astrojs/vercel', '@astrojs/node', '@astrojs/netlify', '@astrojs/cloudflare'];
+
 export async function detectProject(projectDir) {
   const packageText = await readText(path.join(projectDir, 'package.json'));
   if (packageText === null) return detectPlain(projectDir);
@@ -60,22 +63,28 @@ export async function detectProject(projectDir) {
     return found('next-server', null, null, "Found next without output: 'export' in next.config, so it needs a server and has no static build to save.");
   }
   if (has('@sveltejs/kit')) {
+    // Every other adapter (adapter-auto, -node, -vercel, -netlify) builds for a server, so there is nothing to save.
     if (!has('@sveltejs/adapter-static')) {
-      return unknown('Found SvelteKit without @sveltejs/adapter-static, so it has no static build to save.');
+      return found('sveltekit-server', null, null, 'Found SvelteKit without @sveltejs/adapter-static, so it has no static build to save.');
     }
     const config = await readFirst(projectDir, ['svelte.config.js', 'svelte.config.mjs', 'svelte.config.cjs', 'svelte.config.ts']);
     const pages = config?.match(/\bpages\s*:\s*['"`]([^'"`]+)['"`]/)?.[1] ?? 'build';
     return found('sveltekit-static', pages, 'npm run build', `Found SvelteKit with adapter-static; it builds to ${pages}/.`);
   }
   if (has('astro')) {
-    // @astrojs/vercel is a server adapter by default: unless the config says output: 'static', there is no dist/ of plain
-    // pages to save. With output: 'static' dist/ is there and can be saved. That is all it settles: the adapter still
-    // writes .vercel/output on every build, which Vercel deploys in place of the Afterimage site (init says so).
-    if (has('@astrojs/vercel')) {
-      const config = await readFirst(projectDir, ['astro.config.mjs', 'astro.config.js', 'astro.config.cjs', 'astro.config.ts', 'astro.config.mts']);
-      if (config === null || !/\boutput\s*:\s*['"`]static['"`]/.test(config)) {
-        return found('astro-server', null, null, "Found astro with @astrojs/vercel, a server adapter, without output: 'static' in the astro config, so it has no static build to save.");
-      }
+    // An adapter (@astrojs/vercel, -node, -netlify, -cloudflare, or any other in the config) builds for a server: unless
+    // the config says output: 'static', there is no dist/ of plain pages to save. With output: 'static' the pages are in
+    // dist/ and can be saved. That is all it settles for @astrojs/vercel: it still writes .vercel/output on every build,
+    // which Vercel deploys in place of the Afterimage site (init says so).
+    const config = (await readFirst(projectDir, ['astro.config.mjs', 'astro.config.js', 'astro.config.cjs', 'astro.config.ts', 'astro.config.mts'])) ?? '';
+    const named = astroAdapters.find(has);
+    const inConfig = /\badapter\s*:/.test(config);
+    const serverOutput = /\boutput\s*:\s*['"`]server['"`]/.test(config);
+    if ((named || inConfig || serverOutput) && !/\boutput\s*:\s*['"`]static['"`]/.test(config)) {
+      const reason = named ? `Found astro with ${named}, a server adapter, without output: 'static' in the astro config`
+        : inConfig ? "Found an adapter in the astro config, which builds for a server, without output: 'static'"
+          : "Found astro with output: 'server' in the astro config";
+      return found('astro-server', null, null, `${reason}, so it has no static build to save.`);
     }
     return found('astro', 'dist', 'npm run build', 'Found astro in package.json; it builds to dist/.');
   }

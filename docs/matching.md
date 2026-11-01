@@ -46,18 +46,20 @@ The value is yours to choose. It only has to be the same in every version and un
 
 Framework builds make up class names, ids and attributes, and many of them change from one build to the next even when the page doesn't. Matched by those names, two builds of the same page would look like a page of changes. So the viewer ignores the names below, both as keys and as compared values:
 
-| Tool | Looks like |
-| --- | --- |
-| Svelte scoped styles | `svelte-dfcawr` |
-| Svelte 4 hydration marker | `data-svelte-h` |
-| Astro scoped styles | `astro-yk4hkwyg`, `data-astro-cid-yk4hkwyg` |
-| Vite CSS modules | `_card_13qjp_1` |
-| Next.js CSS modules with Turbopack | `_5Ujt5W_page`, `OIGFdW_title1` |
-| Emotion | `css-1q2w3e4`, `css-1q2w3e4-Button` |
-| React `useId`, React 19.3 | `_r_1_`, `_R_5ritbH1_` |
-| React `useId`, React 19.1 | `«r1»`, `«R5ritbH1»` |
-| React `useId`, React 18 | `:r0:`, `:R5ritbH1:` |
-| Vue scoped styles | `data-v-7ba5bd90` |
+| Tool | Looks like | Checked against |
+| --- | --- | --- |
+| Svelte scoped styles | `svelte-dfcawr` | the SvelteKit example's builds |
+| Svelte 4 hydration marker | `data-svelte-h` | its shape only, not yet a real build |
+| Astro scoped styles | `astro-yk4hkwyg`, `data-astro-cid-yk4hkwyg` | the attribute in the Astro example's builds, the class on Astro 7.4.4 |
+| Vite CSS modules | `_card_13qjp_1` | Vite 8.3.5's source |
+| Next.js CSS modules with Turbopack | `_5Ujt5W_page`, `OIGFdW_title1` | the Next.js example's builds, and 60 modules built for the list |
+| Emotion | `css-1q2w3e4`, `css-1q2w3e4-Button` | its shape only, not yet a real build |
+| React `useId`, React 19.3 | `_r_1_`, `_R_5ritbH1_` | react-dom 19.3's source |
+| React `useId`, React 19.1 | `«r1»`, `«R5ritbH1»` | its shape only, not yet a real build |
+| React `useId`, React 18 | `:r0:`, `:R5ritbH1:` | its shape only, not yet a real build |
+| Vue scoped styles | `data-v-7ba5bd90` | its shape only, not yet a real build |
+
+The ones checked against their shape only are recognised by the pattern they are documented to follow, and haven't been tried on a real build yet.
 
 An element whose only id or class is generated falls back to the next rule, usually its position. Inside an icon, generated ids are renumbered in order, and the references to them follow, so a rebuilt icon is the same icon.
 

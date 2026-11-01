@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as map from '../src/runtime/map.js';
 import { fingerprint, readSnapshot, saveVersion, verifyHistory } from '../src/cli/history.js';
+import { showsVersion } from '../src/viewer/frames.js';
 
 const { frameTag, injectFrameScript } = map;
 const northwind = fileURLToPath(new URL('../examples/northwind/afterimage/', import.meta.url));
@@ -403,9 +404,9 @@ test('when the Cache API fails, requests still go through instead of failing', a
 
 // ---- frame.js ----
 
-// Runs frame.js the way a saved page loads it, at `path` in v2, with the Navigation API or without it.
-// Returns the page's globals and what frame.js asked the browser to do.
-function loadPage(path, { withNavigation = true } = {}) {
+// Runs frame.js the way a saved page loads it, at `path` in v2, with the Navigation API or without it, and controlled
+// by the worker or not. Returns the page's globals and what frame.js asked the browser to do.
+function loadPage(path, { withNavigation = true, controlled = true } = {}) {
   let url = new URL(`${origin}${path}`);
   const handlers = {};
   const redirects = [];
@@ -417,7 +418,8 @@ function loadPage(path, { withNavigation = true } = {}) {
   const history = { state: null, replaceState: (state, title, next) => { url = new URL(next, url); } };
   class Element {}
   const page = {
-    document: { currentScript: { dataset: { afterimageVersion: 'v2' } } }, location, history, URL, Element,
+    document: { currentScript: { dataset: { afterimageVersion: 'v2' } }, readyState: 'complete' }, location, history, URL, Element,
+    navigator: { serviceWorker: { controller: controlled ? {} : null } },
     addEventListener: (type, fn) => { handlers[type] = fn; },
   };
   if (withNavigation) {
@@ -454,6 +456,34 @@ test('frame.js marks the version and gives the app its own path', () => {
   const elsewhere = loadPage('/somewhere/index.html');
   assert.equal(elsewhere.page.__afterimageVersion, undefined);
   assert.equal(elsewhere.location.pathname, '/somewhere/index.html');
+});
+
+test('without a worker in control, frame.js leaves the page at its own URL, and the viewer still knows it', () => {
+  const version = { id: 'v2', file: 'versions/v2/index.html' };
+  const viewer = `${origin}/afterimage/?version=v2`;
+  const frame = loadPage('/afterimage/versions/v2/index.html?lang=en', { controlled: false });
+  // Relative files resolve against this URL, so they load from the version folder and not from the live app.
+  assert.equal(frame.location.pathname + frame.location.search, '/afterimage/versions/v2/index.html?lang=en');
+  assert.equal(frame.page.__afterimageVersion, 'v2');
+  assert.equal(frame.page.__afterimageFile, '/afterimage/versions/v2/index.html');
+  assert.equal(frame.page.__afterimagePath, '/afterimage/versions/v2/index.html?lang=en');
+  frame.handlers.load();
+  assert.equal(frame.page.__afterimagePath, '/afterimage/versions/v2/index.html?lang=en');
+  assert.equal(showsVersion({ contentWindow: frame.page }, version, viewer), true);
+  assert.equal(showsVersion({ contentWindow: frame.page }, { id: 'v1', file: 'versions/v1/index.html' }, viewer), false);
+  // A hard link to another file of the version is still told apart from the version's own page.
+  const other = loadPage('/afterimage/versions/v2/two.html', { controlled: false });
+  assert.equal(other.location.pathname, '/afterimage/versions/v2/two.html');
+  assert.equal(showsVersion({ contentWindow: other.page }, version, viewer), false);
+  // Root-path navigations still move into the version.
+  assert.equal(navigate(frame, `${origin}/about`), true);
+  assert.deepEqual(frame.redirects, [[`${origin}/afterimage/versions/v2/about`, 'auto']]);
+});
+
+test('a controlled page the viewer compares is its own, at the app path frame.js gives it', () => {
+  const frame = loadPage('/afterimage/versions/v2/index.html');
+  frame.handlers.load();
+  assert.equal(showsVersion({ contentWindow: frame.page }, { id: 'v2', file: 'versions/v2/index.html' }, `${origin}/afterimage/`), true);
 });
 
 test('frame.js sends root-path navigations into the version and leaves the rest alone', async () => {

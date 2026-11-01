@@ -176,7 +176,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
     const timer = setTimeout(() => setCardPan(shownPan), 120);
     return () => clearTimeout(timer);
   }, [shownPan]);
-  // and stays within that side, so it never straddles the divider (review-checks.md:62).
+  // and stays within that side, so it never straddles the divider.
   const range = visibleRange({ layout, wipe: cardWipe, width: size.width, onBase: cardOnBase, peek: state.peek, scrollX, pan: cardPan, visible: boxes.visible });
   const boundsMin = range?.min ?? null;
   const boundsMax = range?.max ?? null;

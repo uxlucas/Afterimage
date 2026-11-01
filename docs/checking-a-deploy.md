@@ -181,3 +181,11 @@ For each host and example:
 - the results of checks H and I
 
 A line that differs from what is expected is a finding about the hosts, not a failure of the procedure. Record it, then update [deploying.md](deploying.md), and `init` if a setting has to change.
+
+## Results
+
+Add a row for each run, with the details above kept next to it (a pull request, an issue or a gist), and change the warning at the top of this page and of [deploying.md](deploying.md) once every example has passed on both hosts.
+
+| Date | Afterimage version | Example | Host | Vercel preset | Checks as expected | Findings |
+| --- | --- | --- | --- | --- | --- | --- |
+| Not run yet | | | | | | |
