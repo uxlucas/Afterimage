@@ -1,0 +1,146 @@
+# Commands
+
+Run every command from the project root, where `afterimage.config.json` is. With Afterimage installed in the project, `npx afterimage` runs it, and so do the package scripts `npm run afterimage:save`, `npm run afterimage:dev` and `npm run afterimage:build` that init adds.
+
+```text
+afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]
+afterimage save "Name" [--note "..."]
+afterimage dev [--port N]
+afterimage build
+```
+
+`npx afterimage --help` lists them, and `npx afterimage help <command>` or `--help` after a command shows one. `-h` is the same as `--help`.
+
+## init
+
+```bash
+npx afterimage init [--source <folder>] [--build "<command>"] [--agent claude|cursor] [--no-input]
+```
+
+Sets up Afterimage in the project: config, scripts, git rules and host config.
+
+| Flag | What it does |
+| --- | --- |
+| `--source <folder>` | The folder that holds the prototype, or that your build writes to. It must be inside the project. |
+| `--build "<command>"` | The command that builds the prototype, when there is one. Without a build, the folder must already exist. |
+| `--agent claude` | Also copies Afterimage's skill to `.claude/skills/afterimage/`, for Claude Code. |
+| `--agent cursor` | Also copies the same instructions as a rule to `.cursor/rules/afterimage.mdc`, for Cursor. |
+| `--no-input` | Asks nothing, even in a terminal. Where init would have asked, it stops with a message or prints what is left for you to do. |
+
+Without `--source`, init detects the prototype; [getting-started.md](getting-started.md#2-set-up-the-project) has the table. When it can't, it asks in a terminal, and otherwise stops with `Say where the prototype is: afterimage init --source <folder>`. A project with no static build to save (Next.js without `output: 'export'`, Astro with a server adapter, SvelteKit without `@sveltejs/adapter-static`) stops with a message that says `no static build` and what to change.
+
+It writes:
+
+| File | What init does to it |
+| --- | --- |
+| `afterimage.config.json` | Creates it. With `--source` or `--build` on a later run, updates those two fields. |
+| `package.json` | Adds the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build` where they are missing, keeping the file's own indent and line endings. Creates a private `package.json` when there is none. |
+| `.gitattributes` | Adds `afterimage/** -text`. |
+| `.gitignore` | Adds `.afterimage/` and `node_modules/`. |
+| `vercel.json` | Creates it, or adds what is missing. Asks before it changes a value that is already set. See [deploying.md](deploying.md#vercel). |
+| `netlify.toml` | Creates it. An existing one is never edited: init prints the lines to add. See [deploying.md](deploying.md#netlify). |
+| The agent's copy | Only with `--agent`. Asks before it replaces a copy you have changed. |
+
+Every step is worked out before anything is written, so a bad input or a cancelled question leaves the project as it was. Running init again only adds what is missing; when everything is in place it says `Everything is already set up. Nothing changed.` The notes it prints after the list of files are for you: a setting it left alone, or a line to add by hand.
+
+## save
+
+```bash
+npx afterimage save "Name" [--note "..."]
+```
+
+Builds the prototype and saves it as the next version.
+
+| Flag | What it does |
+| --- | --- |
+| `--note "..."` | A note on the version. Repeat it for more than one. |
+
+- The name goes in quotes, up to 120 characters. Each note is up to 500 characters.
+- When the config has a build command, save runs it first. If the build fails, nothing is saved.
+- The version goes to `afterimage/versions/vN/`, and `afterimage/versions.json` lists it first. On success it prints `Saved v4 "Remember me".`
+- If the prototype is the same as the latest version, it prints `Nothing changed since v3 "Passkeys". Nothing was saved.` and exits 0.
+- It checks every saved version against its fingerprint first, and stops if one was edited.
+- One save runs at a time. A second one stops with a message rather than waiting.
+- If the prototype changes while it is being saved, the save stops and saves nothing. Run it again once editing stops.
+
+### What a save keeps
+
+A save copies the prototype folder with these rules:
+
+- `index.html` must be at its top.
+- Files with these extensions are kept: `.html` `.css` `.js` `.mjs` `.json` `.svg` `.png` `.jpg` `.jpeg` `.webp` `.gif` `.avif` `.ico` `.woff` `.woff2` `.ttf` `.otf` `.mp4` `.webm` `.mp3` `.wav` `.ogg` `.wasm` `.txt` `.webmanifest` `.xml` `.pdf`.
+- Any other file stops the save with its name. Add it to `exclude` in the config if it isn't part of the prototype.
+- Source maps (`.map`), hidden files and folders (names starting with `.`) and operating-system clutter (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`) are skipped.
+- A symbolic link stops the save. Remove it, or add it to `exclude`.
+- When the prototype is the project root, the project's own files stay out: `node_modules`, `afterimage`, `.afterimage`, `package.json`, `package-lock.json`, `afterimage.config.json`, `vercel.json`, `netlify.toml`, and a top-level README, LICENSE, CLAUDE or AGENTS file, bare or ending in `.md`, `.markdown`, `.txt` or `.rst`.
+
+Each saved HTML page gets one tag added at the start of its `<head>`, `<script src="/afterimage/frame.js" data-afterimage-version="v4">`, which lets a built app load inside the viewer. Nothing else in the files changes.
+
+## dev
+
+```bash
+npx afterimage dev [--port N]
+```
+
+Serves the saved history at `/afterimage/` while your app runs on its own dev server.
+
+| Flag | What it does |
+| --- | --- |
+| `--port N` | The port to start from, 1 to 65535. The default is 4321. |
+
+- It prints `Afterimage is running at http://localhost:4321/afterimage/`. When the port is taken it tries the next one, up to 20 ports, and prints the one it got.
+- It only listens on this machine (127.0.0.1).
+- It serves the viewer and the saved versions, not your app, and doesn't run your build.
+- When a save finishes it rebuilds what it serves and prints `Updated: N versions.` If that fails it prints `Could not update the history` and keeps serving the last good copy.
+- With no saved versions it stops with `Save a first version with: afterimage save "Name"`.
+- It runs until you stop it with Ctrl-C.
+
+## build
+
+```bash
+npx afterimage build
+```
+
+Builds the prototype and writes the deployable site with the history at `/afterimage/`. It takes no flags besides `--help`.
+
+- It checks every saved version against its fingerprint, then runs the build command when the config has one.
+- It writes `.afterimage/site/`: the prototype at the root, with the same files a save would keep, and under `afterimage/` the viewer, `versions.json`, every saved version and the frame runtime (`sw.js` and `frame.js`).
+- It stops if the app has its own top-level `afterimage` file or folder, since the history is served there.
+- The previous site stays in place until the new one is complete, so a failed build leaves it as it was.
+- With no saved versions it stops with `Save a first version with: afterimage save "Name"`.
+- On success it prints `Built .afterimage/site with 2 versions. Serve it from any static host; the history is at /afterimage/.`
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Done, including a save that found nothing to save. |
+| `1` | It failed, with a message that says why. |
+| `2` | The command was used wrongly: an unknown command or flag, a missing name, a bad port. The usage line follows. |
+| `130` | You pressed Ctrl-C at one of init's questions. Nothing was changed. |
+
+## The config file
+
+`init` writes `afterimage.config.json`. You can edit it by hand.
+
+```json
+{
+  "source": "dist",
+  "build": "npm run build",
+  "history": "afterimage",
+  "out": ".afterimage/site",
+  "exclude": [],
+  "type": "vite"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `source` | The folder that is saved, relative to the project. `.` is the project root. |
+| `build` | The command that writes `source`, run through your shell like an npm script, or `null`. |
+| `history` | The folder that holds the saved versions. Commit it. |
+| `out` | Where `build` writes the site. Keep it git-ignored. |
+| `exclude` | Paths inside `source` to leave out, as files or folders. |
+| `type` | What init detected, for reference. |
+
+Every path must stay inside the project. The host config runs `npm run afterimage:build` and serves `.afterimage/site`, so change `out` only if you change the host config to match.

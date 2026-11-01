@@ -3,6 +3,26 @@
   "version": "0.1.0",
   "description": "A version-history viewer for prototypes.",
   "license": "MIT",
+  "keywords": [
+    "version-history",
+    "prototype",
+    "prototyping",
+    "design",
+    "viewer",
+    "compare",
+    "diff",
+    "static-site",
+    "vercel",
+    "netlify"
+  ],
+  "homepage": "https://github.com/uxlucas/Afterimage#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uxlucas/Afterimage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/uxlucas/Afterimage/issues"
+  },
   "type": "module",
   "bin": {
     "afterimage": "bin/afterimage.mjs"

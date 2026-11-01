@@ -54,7 +54,7 @@ test('without bounds the card goes right of the region, as before', () => {
   assert.equal(top, 275);
 });
 
-test('a card on the Before side stays left of the divider (review-checks.md:62)', () => {
+test('a card on the Before side stays left of the divider, not across it', () => {
   // region at 300..400 on the base, divider at 450: right of the region would straddle the divider
   const { left } = cardPlacement({ ...card, rect: rect(300, 100), bounds: { min: 0, max: 450 } });
   assert.ok(left + 196 <= 450, `card ends at ${left + 196}`);
