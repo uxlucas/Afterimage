@@ -23,19 +23,20 @@ async function readFirst(projectDir, names) {
   return null;
 }
 
-async function detectPlain(projectDir) {
+// wrapped: the folder has a package.json that only holds afterimage-cli (see detectProject).
+async function detectPlain(projectDir, wrapped = false) {
   const entries = await fs.readdir(projectDir, { withFileTypes: true });
   if (entries.some(entry => entry.isFile() && entry.name === 'index.html')) {
     return found('plain', '.', null, 'Found index.html at the top of this folder; it is the prototype.');
   }
   const folders = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     if (await readText(path.join(projectDir, entry.name, 'index.html')) !== null) folders.push(entry.name);
   }
   if (folders.length === 1) return found('plain', folders[0], null, `Found index.html in ${folders[0]}/; it is the prototype.`);
   if (folders.length > 1) return unknown(`Found index.html in ${folders.length} folders (${folders.join(', ')}), so there is no single prototype folder.`);
-  return unknown('Found no package.json and no index.html here.');
+  return unknown(wrapped ? 'Found a package.json with no framework and no build, and no index.html here.' : 'Found no package.json and no index.html here.');
 }
 
 export async function detectProject(projectDir) {
@@ -79,5 +80,8 @@ export async function detectProject(projectDir) {
     return found('astro', 'dist', 'npm run build', 'Found astro in package.json; it builds to dist/.');
   }
   if (has('vite')) return found('vite', 'dist', 'npm run build', 'Found vite in package.json; it builds to dist/.');
+  // A plain HTML folder gets a package.json from the setup prompt (npm init -y, then the install). One that holds
+  // nothing but afterimage-cli and has no build is still that folder, so it is read the way a folder without one is.
+  if (Object.keys(dependencies).every(name => name === 'afterimage-cli') && !manifest?.scripts?.build) return detectPlain(projectDir, true);
   return unknown('Found a package.json, but no framework Afterimage recognises (vite, next, astro or SvelteKit).');
 }

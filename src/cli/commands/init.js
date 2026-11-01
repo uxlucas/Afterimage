@@ -26,8 +26,12 @@ const hostOutput = '.afterimage/site';
 // checks the filesystem first), and this one leaves /afterimage/ out altogether. tests/e2e/harness.mjs reads it.
 export const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)', destination: '/:path*.html' };
 
-// Task 12 ships the skill here; the setup prompt copies it into the agent's own folder.
-const skillHint = 'Agent skill: node_modules/afterimage-cli/agents/skill/ (copy it to .claude/skills/afterimage/)';
+// Init never writes into an agent's folder unasked; it says where the package's copies are (docs/agents.md has the rest).
+const skillHint = [
+  'To let your coding agent save and compare versions:',
+  '  Claude Code: copy node_modules/afterimage-cli/agents/skill/ to .claude/skills/afterimage/',
+  '  Cursor: copy node_modules/afterimage-cli/agents/cursor/afterimage.mdc to .cursor/rules/'
+].join('\n');
 
 const nextStep = 'Next: npx afterimage save "First version"';
 

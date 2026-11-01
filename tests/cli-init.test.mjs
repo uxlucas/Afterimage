@@ -795,3 +795,22 @@ for (const [title, setup, args] of [
     assert.deepEqual(await snapshot(root), before);
   });
 }
+
+test('init names where the agent skill is', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  const result = await run(root);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^ {2}Claude Code: copy node_modules\/afterimage-cli\/agents\/skill\/ to \.claude\/skills\/afterimage\/$/m);
+  assert.match(result.stdout, /^ {2}Cursor: copy node_modules\/afterimage-cli\/agents\/cursor\/afterimage\.mdc to \.cursor\/rules\/$/m);
+  // Every path it names inside the package is a file the package ships.
+  const packageRoot = path.resolve(import.meta.dirname, '..');
+  const shipped = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).files;
+  const named = [...result.stdout.matchAll(/node_modules\/afterimage-cli\/(\S+)/g)].map(match => match[1]);
+  assert.deepEqual(named, ['agents/skill/', 'agents/cursor/afterimage.mdc']);
+  for (const name of named) {
+    assert.ok(shipped.includes(name.split('/')[0]), `${name} is in package.json files`);
+    assert.ok(await exists(packageRoot, name), `${name} exists`);
+  }
+  assert.ok(await exists(packageRoot, 'agents/skill/SKILL.md'));
+});

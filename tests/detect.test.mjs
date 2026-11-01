@@ -134,3 +134,21 @@ test('a package.json that is not valid JSON is unknown', async t => {
   const found = await detect(t, { 'package.json': '{ nope' }, { type: 'unknown', source: null, build: null });
   assert.match(found.reason, /package\.json/);
 });
+
+// What a plain HTML folder has after the setup prompt's "npm init -y" and the install: no framework, no build.
+const wrapper = (extra = {}) => JSON.stringify({ name: 'demo', version: '1.0.0', scripts: { test: 'echo "Error: no test specified" && exit 1' }, devDependencies: { 'afterimage-cli': '^0.1.0' }, ...extra });
+
+test('a package.json with only afterimage-cli and no build is still a plain folder', async t => {
+  await detect(t, { 'package.json': wrapper(), 'index.html': '<!doctype html>' }, { type: 'plain', source: '.', build: null });
+  await detect(t, { 'package.json': wrapper(), 'prototype/index.html': '<!doctype html>' }, { type: 'plain', source: 'prototype', build: null });
+});
+
+test('a package.json with only afterimage-cli and no index.html anywhere is unknown, and says so', async t => {
+  const found = await detect(t, { 'package.json': wrapper() }, { type: 'unknown', source: null, build: null });
+  assert.match(found.reason, /no index\.html/);
+  assert.doesNotMatch(found.reason, /no package\.json/);
+});
+
+test('a package.json with a build script is not taken for a plain folder', async t => {
+  await detect(t, { 'package.json': wrapper({ scripts: { build: 'node make.js' } }), 'index.html': '<!doctype html>' }, { type: 'unknown', source: null, build: null });
+});
