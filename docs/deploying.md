@@ -28,7 +28,7 @@ The host only sees what is in git. Commit:
 
 ## Vercel
 
-For a Next.js project, `init` writes this `vercel.json`. Other projects get the same file without `"framework": null`.
+For a Next.js project, `init` writes this `vercel.json`. Other projects get the same file without `"framework": null` and `"headers"`.
 
 ```json
 {
@@ -46,6 +46,17 @@ For a Next.js project, `init` writes this `vercel.json`. Other projects get the 
       "source": "/afterimage",
       "destination": "/afterimage/"
     }
+  ],
+  "headers": [
+    {
+      "source": "/_next/static/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
   ]
 }
 ```
@@ -55,13 +66,14 @@ In the project's settings on Vercel, leave the Build Command and Output Director
 What each setting is for:
 
 - **`buildCommand` and `outputDirectory`.** Vercel runs Afterimage's build, which runs your own build first, and serves the combined site. The command goes through the package script so the project's own copy of Afterimage runs.
-- **`"framework": null`, only for projects that depend on `next`.** Without it, Vercel's Next.js builder treats the output folder as its own and the deploy fails, since `.afterimage/site/` has none of the files it expects (`routes-manifest.json`). `null` is Vercel's "Other" preset, which serves the output folder as plain files. It is keyed on the dependency, not on what init detected, because Vercel picks the framework from `package.json`. The cost: the Next.js builder's long cache headers on `_next/static` go, and so does its clean-URL handling, which the rewrite below brings back. Vite, Astro and SvelteKit keep their presets, which serve `outputDirectory` and add their own cache headers.
+- **`"framework": null`, only for projects that depend on `next`.** Without it, Vercel's Next.js builder treats the output folder as its own and the deploy fails, since `.afterimage/site/` has none of the files it expects (`routes-manifest.json`). `null` is Vercel's "Other" preset, which serves the output folder as plain files. It is keyed on the dependency, not on what init detected, because Vercel picks the framework from `package.json`. The cost: the Next.js builder's long cache headers on `_next/static` go, and so does its clean-URL handling. The header rule and the rewrite below bring them back. Vite, Astro and SvelteKit keep their presets, which serve `outputDirectory` and add their own cache headers.
 - **The rewrite.** It gives the live app clean URLs: `/about` is answered from `about.html` when no file is called `about`. Next.js and SvelteKit static builds write `about.html` and link to `/about`, and Vercel doesn't do this for a plain folder on its own. A rewrite isn't a redirect, Vercel only uses it when no file matches the path, and this one leaves `/afterimage` and everything under it out.
 - **The redirect.** Vercel answers `/afterimage` without the slash with the viewer's page, whose files are relative and would then load from the root. The redirect adds the slash. It matches that exact path, so `/afterimage/` isn't caught and nothing loops.
+- **The header, only for projects that depend on `next`.** Next.js names the files in `_next/static` after their contents or the build, so they never change under the same name, and its own builder tells browsers to keep them for a year. Without that builder they would be checked again on every visit. The rule matches the live app's `/_next/static/` only, not a version's copies under `/afterimage/`. Added in 0.1.1, and not yet checked on a real deploy.
 
 ### An existing vercel.json
 
-`init` keeps everything else in the file. Your own rewrites and redirects stay first, and Afterimage's are added after them, once.
+`init` keeps everything else in the file. Your own rewrites, redirects and headers stay first, and Afterimage's are added after them, once. A header rule of your own for `/_next/static/` is kept instead of Afterimage's. A project set up with 0.1.0 gets the header by running `npx afterimage init` again.
 
 - **A different `buildCommand` or `outputDirectory`,** or a named `framework` in a Next.js project: init asks before it switches them. Answer no, or run it with `--no-input`, and it leaves the file as it is and prints what to set.
 - **`"cleanUrls": true`:** init leaves it, doesn't add the rewrite, and warns on every run. `cleanUrls` redirects every `.html` path site-wide, including the history's own pages, such as `/afterimage/versions/v2/index.html`, and the viewer can't follow a version out of its folder. Remove it: the rewrite gives the live app clean URLs without touching `/afterimage/`.
@@ -78,7 +90,7 @@ Vercel sets the `VERCEL` environment variable while it builds, and some tools ta
 
 ## Netlify
 
-`init` writes this `netlify.toml`. The `[build.environment]` part is only for projects that depend on `next`.
+`init` writes this `netlify.toml`. The `[build.environment]` and `[[headers]]` parts are only for projects that depend on `next`.
 
 ```toml
 [build]
@@ -87,13 +99,19 @@ Vercel sets the `VERCEL` environment variable while it builds, and some tools ta
 
 [build.environment]
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
+
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
 ```
 
 - **`command` and `publish`.** Netlify runs Afterimage's build and publishes the combined site.
 - **`NETLIFY_NEXT_PLUGIN_SKIP`.** Netlify installs its Next.js runtime for every Next.js project. After the build, the runtime copies the static export's `out/` folder over the publish folder, so `/afterimage/` wouldn't deploy. The variable makes the runtime step aside.
+- **`[[headers]]`.** With the runtime aside, `_next/static` loses the year-long cache it would have set, as on Vercel. This brings it back for the live app. Added in 0.1.1, and not yet checked on a real deploy.
 - **No rewrite.** Netlify answers `/about` from `about.html` on its own.
 
-An existing `netlify.toml` is never edited: a hand edit is safer than a guessed merge. init prints the lines to add, and stops printing them once they are there.
+An existing `netlify.toml` is never edited: a hand edit is safer than a guessed merge. init prints the lines to add, and stops printing them once they are there. A `[[headers]]` rule of your own for `/_next/static/` counts. A project set up with 0.1.0 is told to add the header by running `npx afterimage init` again.
 
 Build with Node 22 or later. On Netlify, the `NODE_VERSION` environment variable sets it.
 

@@ -129,7 +129,7 @@ curl -sI $H/_next/static/chunks/<file>.js | grep -i cache-control       # after:
 curl -sI $H/_astro/<file> | grep -i cache-control                       # astro, before and after
 ```
 
-Vercel's baseline is expected to show `public, max-age=31536000, immutable` for Next.js and Astro. Astro keeps its preset, so its after should match its before. Next.js's after is expected to lose it, because of `"framework": null`. Write down what you see.
+Vercel's baseline is expected to show `public, max-age=31536000, immutable` for Next.js and Astro. Astro keeps its preset, so its after should match its before. For Next.js, `"framework": null` and `NETLIFY_NEXT_PLUGIN_SKIP` take the long cache away (0.1.0 showed `max-age=0` on both hosts), and from 0.1.1 the header rule `init` writes brings it back: the after should show `public, max-age=31536000, immutable` on both hosts. Write down what you see.
 
 ### G. Bytes as served (Netlify Pretty URLs)
 

@@ -53,6 +53,9 @@ const hostOutput = '.afterimage/site';
 const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)', destination: '/:path*.html' };
 // And the slash on /afterimage, which Vercel otherwise answers with the viewer's page and no redirect.
 const slashRedirect = { source: '/afterimage', destination: '/afterimage/' };
+// And, for a Next.js project, the long cache on the live app's hashed files that Vercel's Next.js builder would have set.
+const nextStaticCache = { source: '/_next/static/(.*)', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] };
+const netlifyStaticCache = '[[headers]]\n  for = "/_next/static/*"\n  [headers.values]\n    Cache-Control = "public, max-age=31536000, immutable"\n';
 const lines = text => text.split(/\r?\n/);
 
 test('init in a plain folder creates package.json and ignores node_modules', async t => {
@@ -160,25 +163,46 @@ const nextProject = async root => {
 // Vercel detects the framework from package.json, and Next.js's own builder serves the export's folder (out/) instead of
 // outputDirectory, so a project that depends on next needs "framework": null. Other presets honour outputDirectory and
 // would lose cache headers or a SPA fallback to null, so they keep theirs. The rewrite is how the live app keeps clean
-// URLs without the Next builder, and the redirect puts the slash on /afterimage. None of them touches /afterimage/'s files.
+// URLs without the Next builder, and the redirect puts the slash on /afterimage. The header gives back the builder's long
+// cache on /_next/static. None of them touches /afterimage/'s files.
 test('vercel.json of a Next.js project asks for no framework', async t => {
   const root = await temp(t);
   await nextProject(root);
   const result = await run(root);
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
+  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect], headers: [nextStaticCache] });
   assert.match(await read(root, 'vercel.json'), /^\{\n {2}"framework": null,\n {2}"buildCommand": /);
   assert.match(result.stdout, /^Created vercel\.json$/m);
 });
 
-test('vercel.json of other projects names no framework, whatever the project uses', async t => {
+// Their presets keep their own cache headers, so they get no header rule either.
+test('vercel.json of other projects names no framework and adds no headers, whatever the project uses', async t => {
   for (const dependencies of [{ vite: '1.0.0' }, { astro: '5.0.0' }, { '@sveltejs/kit': '2.0.0', '@sveltejs/adapter-static': '3.0.0' }]) {
     const root = await temp(t);
     await write(root, 'package.json', JSON.stringify({ devDependencies: dependencies }));
     await write(root, 'index.html', '<h1>Hi</h1>');
     await run(root, ['--source', '.']);
-    assert.equal(Object.hasOwn(await readJson(root, 'vercel.json'), 'framework'), false, Object.keys(dependencies)[0]);
+    const settings = await readJson(root, 'vercel.json');
+    assert.equal(Object.hasOwn(settings, 'framework'), false, Object.keys(dependencies)[0]);
+    assert.equal(Object.hasOwn(settings, 'headers'), false, Object.keys(dependencies)[0]);
   }
+});
+
+// A project set up by 0.1.0 has everything but the header: running init again adds it, after the project's own rules.
+test('a Next.js project\'s own headers stay first, and a rule of its own for /_next/static is kept as it is', async t => {
+  const root = await temp(t);
+  await nextProject(root);
+  const own = { source: '/(.*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] };
+  await write(root, 'vercel.json', JSON.stringify({ framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect], headers: [own] }));
+  const result = await run(root);
+  assert.match(result.stdout, /^Updated vercel\.json \(set headers\)$/m);
+  assert.deepEqual((await readJson(root, 'vercel.json')).headers, [own, nextStaticCache]);
+  assert.doesNotMatch((await run(root)).stdout, /vercel\.json/);
+
+  const theirs = { source: '/_next/static/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=3600' }] };
+  await write(root, 'vercel.json', JSON.stringify({ framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect], headers: [theirs] }));
+  assert.doesNotMatch((await run(root)).stdout, /vercel\.json/);
+  assert.deepEqual((await readJson(root, 'vercel.json')).headers, [theirs]);
 });
 
 test('a framework another project names is not touched or asked about', async t => {
@@ -246,7 +270,7 @@ test('only the missing vercel.json keys are named as set', async t => {
   const root = await temp(t);
   await nextProject(root);
   await write(root, 'vercel.json', JSON.stringify({ framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, redirects: [slashRedirect] }));
-  assert.match((await run(root)).stdout, /^Updated vercel\.json \(set rewrites\)$/m);
+  assert.match((await run(root)).stdout, /^Updated vercel\.json \(set rewrites, headers\)$/m);
 });
 
 test('cleanUrls: true is left alone and called out, since it takes the history\'s pages out of their folder', async t => {
@@ -311,8 +335,8 @@ test('a named framework in a Next.js project is switched to none only after the 
 
   const agreed = await run(root, [], { answers: ['y'] });
   assert.equal(agreed.questions.length, 1);
-  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect] });
-  assert.match(agreed.stdout, /^Updated vercel\.json \(set framework, rewrites, redirects\)$/m);
+  assert.deepEqual(await readJson(root, 'vercel.json'), { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput, rewrites: [cleanUrlRewrite], redirects: [slashRedirect], headers: [nextStaticCache] });
+  assert.match(agreed.stdout, /^Updated vercel\.json \(set framework, rewrites, redirects, headers\)$/m);
 });
 
 test('a named framework is left alone without a TTY, and the printed values say what to set and what to add', async t => {
@@ -328,6 +352,7 @@ test('a named framework is left alone without a TTY, and the printed values say 
   // Pasting must never replace the project's own rules, so lists are asked to be added to.
   assert.match(result.stdout, /and add this to "rewrites", keeping the rules already there:\n\{\n {2}"source": "\/:path/);
   assert.match(result.stdout, /and add this to "redirects", keeping the rules already there:\n\{\n {2}"source": "\/afterimage"/);
+  assert.match(result.stdout, /and add this to "headers", keeping the rules already there:\n\{\n {2}"source": "\/_next\/static\/\(\.\*\)"/);
   assert.doesNotMatch(result.stdout, /set:\n[^]*"rewrites": \[/);
   assert.doesNotMatch(result.stdout, /already set up/);
 });
@@ -341,7 +366,8 @@ test('a named framework next to a different build is one question about both', a
 });
 
 // Netlify's Next.js runtime deploys a static export's own folder (out/) in place of the publish directory, so a project
-// that depends on next tells it to step aside. Other projects do not get the variable.
+// that depends on next tells it to step aside, and gives back the long cache on /_next/static the runtime would have set.
+// Other projects get neither.
 test('netlify.toml of a Next.js project turns the Next.js runtime off, whatever type init chose', async t => {
   const root = await temp(t);
   await fs.mkdir(path.join(root, 'static'));
@@ -350,17 +376,17 @@ test('netlify.toml of a Next.js project turns the Next.js runtime off, whatever 
   const result = await run(root, ['--source', 'static']);
   assert.equal(result.code, 0, result.stderr);
   assert.equal((await readConfig(root)).type, 'plain');
-  assert.equal(await read(root, 'netlify.toml'), `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n\n[build.environment]\n  NETLIFY_NEXT_PLUGIN_SKIP = "true"\n`);
+  assert.equal(await read(root, 'netlify.toml'), `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n\n[build.environment]\n  NETLIFY_NEXT_PLUGIN_SKIP = "true"\n\n${netlifyStaticCache}`);
 });
 
 test('netlify.toml of other projects has no Next.js setting', async t => {
   const root = await temp(t);
   await write(root, 'package.json', JSON.stringify({ devDependencies: { vite: '1.0.0' } }));
   await run(root);
-  assert.doesNotMatch(await read(root, 'netlify.toml'), /NEXT/);
+  assert.doesNotMatch(await read(root, 'netlify.toml'), /NEXT|_next|headers/);
 });
 
-test('an existing netlify.toml of a Next.js project is told about the runtime setting, and is quiet once it has it', async t => {
+test('an existing netlify.toml of a Next.js project is told about the runtime setting and the cache, and is quiet once it has them', async t => {
   const root = await temp(t);
   await nextProject(root);
   const original = `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`;
@@ -368,9 +394,18 @@ test('an existing netlify.toml of a Next.js project is told about the runtime se
   const result = await run(root);
   assert.equal(await read(root, 'netlify.toml'), original);
   assert.match(result.stdout, /Under \[build\.environment\], set .*:\n {2}NETLIFY_NEXT_PLUGIN_SKIP = "true"/);
+  assert.ok(result.stdout.includes(`add:\n${netlifyStaticCache}`), result.stdout);
   assert.doesNotMatch(result.stdout, /Under \[build\], set/);
 
-  await write(root, 'netlify.toml', `${original}\n[build.environment]\n  NETLIFY_NEXT_PLUGIN_SKIP = "true"\n`);
+  // A project set up by 0.1.0 is told only about the cache.
+  const skipping = `${original}\n[build.environment]\n  NETLIFY_NEXT_PLUGIN_SKIP = "true"\n`;
+  await write(root, 'netlify.toml', skipping);
+  const upgrade = (await run(root)).stdout;
+  assert.ok(upgrade.includes(netlifyStaticCache), upgrade);
+  assert.doesNotMatch(upgrade, /NETLIFY_NEXT_PLUGIN_SKIP/);
+
+  // Any rule of its own for /_next/static counts, whatever it sets.
+  await write(root, 'netlify.toml', `${skipping}\n[[headers]]\n  for = '/_next/static/*'\n  [headers.values]\n    Cache-Control = "public, max-age=3600"\n`);
   assert.doesNotMatch((await run(root)).stdout, /netlify/);
 });
 

@@ -21,7 +21,7 @@ export const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)'
 // own builder takes over: @vercel/next finds .next/export-detail.json after the build and serves the export's folder (out/),
 // not outputDirectory, so /afterimage/ would not deploy. Vercel detects the framework from package.json, so this is keyed
 // on a dependency on next and not on the type init chose. It costs the live app the builder's _next/static caching and its
-// .html stripping, which the rewrite below brings back for the stripping. Other presets (Vite, Astro, SvelteKit) run in
+// .html stripping, which nextStaticCache and the rewrite below bring back. Other presets (Vite, Astro, SvelteKit) run in
 // @vercel/static-build, which uses outputDirectory ahead of the preset's own folder, and null would cost them their cache
 // headers or SPA fallback, so they are left as they are.
 // Source: https://github.com/vercel/vercel/blob/main/packages/next/src/index.ts
@@ -31,6 +31,15 @@ const hostSettings = (next) => (next ? { framework: null, buildCommand: hostBuil
 // then load from the root. The redirect adds the slash. Vercel's redirect source matches that path exactly, so /afterimage/
 // is not caught and nothing loops.
 export const slashRedirect = { source: '/afterimage', destination: '/afterimage/' };
+
+// The long cache on a Next.js app's hashed files (/_next/static: content-hashed names, or the build id in the path), which
+// Vercel's Next.js builder and Netlify's Next.js runtime set and which framework: null and NETLIFY_NEXT_PLUGIN_SKIP give up.
+// Both hosts then serve them with max-age=0 (seen on real deploys, docs/checking-a-deploy.md). The source matches the live
+// app's paths only: a version's copies, under /afterimage/versions/vN/_next/static/, keep the host's default.
+const immutable = 'public, max-age=31536000, immutable';
+export const nextStaticCache = { source: '/_next/static/(.*)', headers: [{ key: 'Cache-Control', value: immutable }] };
+// Any rule of the project's own for those paths counts, whatever it sets.
+const isStaticCache = rule => typeof rule?.source === 'string' && rule.source.trim().startsWith('/_next/static/');
 
 // A rule counts as ours when it points at <path>.html and keeps /afterimage out, however the rest is spelled.
 const isCleanUrlRewrite = rule => typeof rule?.destination === 'string' && /^\/:\w+\*?\.html$/.test(rule.destination) && typeof rule.source === 'string' && rule.source.includes('afterimage');
@@ -75,7 +84,8 @@ export async function planVercel(cwd, { isTTY, ask }) {
   const file = path.join(cwd, 'vercel.json');
   const { bom, body: before } = await readJsonText(file);
   const settings = before === null ? {} : parseJson(before, 'vercel.json');
-  const wanted = hostSettings(await usesNext(cwd));
+  const next = await usesNext(cwd);
+  const wanted = hostSettings(next);
   const notes = [];
   if (await dependsOn(cwd, '@astrojs/vercel')) notes.push(astroVercelNote);
 
@@ -101,6 +111,7 @@ export async function planVercel(cwd, { isTTY, ask }) {
       lists.redirects = planList(settings, 'redirects', slashRedirect, isSlashRedirect, 'so /afterimage opens the viewer');
     }
   }
+  if (next) lists.headers = planList(settings, 'headers', nextStaticCache, isStaticCache, "for the long cache on the live app's /_next/static");
   const added = {};
   for (const [key, plan] of Object.entries(lists)) {
     if (plan.note) notes.push(plan.note);
@@ -116,14 +127,14 @@ export async function planVercel(cwd, { isTTY, ask }) {
     if (!agreed) {
       // Values to set, and entries to add to lists the project may already have: pasting must never replace its own rules.
       const lines = [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${JSON.stringify(wanted, null, 2).slice(2, -2)}`];
-      for (const [key, entry] of [['rewrites', cleanUrlRewrite], ['redirects', slashRedirect]]) {
+      for (const [key, entry] of [['rewrites', cleanUrlRewrite], ['redirects', slashRedirect], ['headers', nextStaticCache]]) {
         if (key in added) lines.push(`and add this to "${key}", keeping the rules already there:\n${JSON.stringify(entry, null, 2)}`);
       }
       return { change: null, notes: [lines.join('\n'), ...notes], apply: null };
     }
     set.unshift(...differs.filter(key => !set.includes(key)));
   }
-  const order = [...Object.keys(wanted), 'rewrites', 'redirects'];
+  const order = [...Object.keys(wanted), 'rewrites', 'redirects', 'headers'];
   const text = JSON.stringify({ ...settings, ...wanted, ...added }, null, 2);
   return {
     change: before === null ? 'Created vercel.json' : `Updated vercel.json (set ${order.filter(key => set.includes(key)).join(', ')})`,
@@ -151,24 +162,30 @@ const usesNext = cwd => dependsOn(cwd, 'next');
 // deploy. NETLIFY_NEXT_PLUGIN_SKIP makes it step aside. Read in opennextjs-netlify's source (src/index.ts,
 // src/build/content/static.ts), not tried on a real deploy. Netlify answers /about from about.html on its own.
 const skipRuntime = 'NETLIFY_NEXT_PLUGIN_SKIP';
+// nextStaticCache, for Netlify. Its paths match the live app's only, as on Vercel.
+const netlifyStaticCache = `[[headers]]\n  for = "/_next/static/*"\n  [headers.values]\n    Cache-Control = "${immutable}"\n`;
 
 export async function planNetlify(cwd) {
   const file = path.join(cwd, 'netlify.toml');
   const before = await readText(file);
   const next = await usesNext(cwd);
   if (before === null) {
-    const environment = next ? `\n[build.environment]\n  ${skipRuntime} = "true"\n` : '';
-    return { change: 'Created netlify.toml', notes: [], apply: writer(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n${environment}`) };
+    const nextOnly = next ? `\n[build.environment]\n  ${skipRuntime} = "true"\n\n${netlifyStaticCache}` : '';
+    return { change: 'Created netlify.toml', notes: [], apply: writer(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n${nextOnly}`) };
   }
   // TOML is not parsed or rewritten here: a hand edit is safer than a guessed merge.
   const hasCommand = new RegExp(`^\\s*command\\s*=\\s*["']${hostBuild}["']`, 'm').test(before);
   const hasPublish = new RegExp(`^\\s*publish\\s*=\\s*["']${hostOutput.replace('.', '\\.')}["']`, 'm').test(before);
   const hasSkip = new RegExp(`^\\s*${skipRuntime}\\s*=\\s*["']?(true|1)["']?\\s*$`, 'm').test(before);
+  // Any [[headers]] rule of the project's own for those paths counts, whatever it sets.
+  const hasCache = /^\s*for\s*=\s*["']\/_next\/static\//m.test(before);
   const wantsSkip = next && !hasSkip;
-  if (hasCommand && hasPublish && !wantsSkip) return { change: null, notes: [], apply: null };
+  const wantsCache = next && !hasCache;
+  if (hasCommand && hasPublish && !wantsSkip && !wantsCache) return { change: null, notes: [], apply: null };
   const lines = [];
   if (!hasCommand || !hasPublish) lines.push(`Under [build], set:\n  command = "${hostBuild}"\n  publish = "${hostOutput}"`);
   if (wantsSkip) lines.push(`Under [build.environment], set (so Netlify's Next.js runtime leaves the history in place instead of deploying out/):\n  ${skipRuntime} = "true"`);
+  if (wantsCache) lines.push(`To keep the long cache on the live app's /_next/static, which the runtime would have set, add:\n${netlifyStaticCache.trimEnd()}`);
   return {
     change: null,
     notes: [`netlify.toml already exists, so Afterimage left it alone. ${lines.join('\n')}`],
