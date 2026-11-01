@@ -2,7 +2,7 @@
 
 A procedure for maintainers. It shows on a real Vercel preview and a real Netlify deploy what the test suite only checks against a local static server: that the host config `init` writes (see [deploying.md](deploying.md)) deploys the history at `/afterimage/` and leaves the live app at the root as its own build makes it.
 
-**It has been run on Vercel, not yet on Netlify.** The [results](#results) are at the end of this page. The Netlify settings still rest on Netlify's documentation and on reading its build tools' source, so treat them as unverified until this procedure has been run there.
+**It has been run on Vercel and on Netlify**, for all four examples, with afterimage-cli 0.1.0. The [results](#results) are at the end of this page. Run it again when a host changes how it builds or serves a site, or when `init` changes the config it writes.
 
 Run it for `examples/next-static` first, since it exercises every setting, then for `examples/astro`, `examples/sveltekit-static` and `examples/vite-react`. Nothing here deploys to production. It needs accounts on GitHub, Vercel and Netlify.
 
@@ -67,6 +67,7 @@ Both hosts build each pushed branch as a branch or preview deployment. Use those
 - Environment variable `NODE_VERSION=22`. Turn on branch deploys for `preview-check`.
 - Before the first deploy, note whether Pretty URLs is on or off (Site configuration, Build and deploy, Post processing). Don't change it.
 - Deploy URL: `N=https://<preview-check--site>.netlify.app`.
+- One site can build all four examples from branches of one repository, with one catch. A site created from a Next.js branch gets Netlify's Next.js runtime for the whole site, and on the other examples' branches the runtime fails the build with `Your publish directory does not contain expected Next.js build output`. Turn it off for those branches only, which is what a site of their own would have: `netlify env:set NETLIFY_NEXT_PLUGIN_SKIP true --context branch:astro`, and the same for the others. Or make a site per example.
 
 ## 2. Checks
 
@@ -195,4 +196,9 @@ Add a row for each run, with the details above kept next to it (a pull request, 
 | 2026-11-01 | 0.1.0 (from npm) | sveltekit-static | Vercel | SvelteKit | A, B, C, E, G | The log shows `Wrote site to "build"`, and `/`, `/about` and `/afterimage/` are 200. |
 | 2026-11-01 | 0.1.0 (from npm) | vite-react | Vercel | Vite | A, B, C, G | The client route `/about` answers 404 at the root. A baseline deploy without Afterimage's `vercel.json` answers 404 too: Vercel serves no single-page-app fallback for Vite by default, so this isn't Afterimage's doing. |
 
-In every Vercel run, both saved versions were served byte for byte as committed, `/afterimage` redirected with a 308 to `/afterimage/`, and a missing path inside a version was a 404. For next-static and astro, the viewer showed both versions and stepped between them in a browser signed in to Vercel. Netlify: not run yet.
+| 2026-11-01 | 0.1.0 (from npm) | next-static | Netlify | — | A, B, C, D, G, H | The log shows the `NETLIFY_NEXT_PLUGIN_SKIP` line. H: without it the runtime runs and `/afterimage/` is a 404. F: `_next/static` chunks are served with `public,max-age=0,must-revalidate`, Netlify's default for plain files. Node 24 by default, with no `NODE_VERSION` set. |
+| 2026-11-01 | 0.1.0 (from npm) | astro | Netlify | — | A, B, C, D, G | `/about` and `/afterimage/versions/v2/about` answer 301 to the slash form. `/about.html` answers 301 to `/about/`, since Astro writes `about/index.html` and no `about.html`. In the viewer, v2's "About this site" opens inside the version, with `__afterimageFile` `/afterimage/versions/v2/about/`, as on the local static server. |
+| 2026-11-01 | 0.1.0 (from npm) | sveltekit-static | Netlify | — | A, B, C, G | The log shows `Wrote site to "build"`. `/about` is 200 and `/about/` answers 301 to `/about`. |
+| 2026-11-01 | 0.1.0 (from npm) | vite-react | Netlify | — | A, B, C, G | `/about` is a 404, as on Vercel. The root differs from a local build only in line endings and the bundle's hash, from building on Windows, not in links. |
+
+In every run, on both hosts, both saved versions were served byte for byte as committed, `/afterimage` redirected to `/afterimage/` (Vercel 308, Netlify 301), and a missing path inside a version was a 404. Netlify ran with Pretty URLs on, its default, and it left the saved versions unchanged, so no `pretty_urls` setting is needed. For next-static and astro, the viewer showed both versions and stepped between them, the service worker's scope was `/afterimage/`, and on Netlify the live root had no service worker controlling it.

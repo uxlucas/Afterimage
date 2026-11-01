@@ -6,7 +6,7 @@ npx afterimage build
 
 `build` writes one static site to `.afterimage/site/`: your app at the root, exactly as its own build makes it, and the history at `/afterimage/`, with the viewer and every saved version. Serve it from the root of a domain, on a static host that meets [the requirements below](#other-static-hosts). On Vercel and Netlify you don't run it yourself: the config `init` wrote has the host run the same build on every deploy.
 
-> The Vercel settings on this page have been checked on real Vercel deployments of all four framework examples with afterimage-cli 0.1.0 ([results](checking-a-deploy.md#results)). The Netlify settings come from Netlify's documentation and from reading its build tools' source code, and haven't been checked on a real Netlify deploy yet. [checking-a-deploy.md](checking-a-deploy.md) is the procedure for that.
+> The Vercel and Netlify settings on this page have been checked on real deployments of all four framework examples with afterimage-cli 0.1.0 ([results](checking-a-deploy.md#results)).
 
 ## Why /afterimage
 
