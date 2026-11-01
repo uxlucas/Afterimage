@@ -36,7 +36,7 @@ It writes:
 | `afterimage.config.json` | Creates it. With `--source` or `--build` on a later run, updates those two fields. |
 | `package.json` | Adds the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build` where they are missing, keeping the file's own indent and line endings. Creates a private `package.json` when there is none. |
 | `.gitattributes` | Adds `afterimage/** -text`. |
-| `.gitignore` | Adds `.afterimage/` and `node_modules/`. |
+| `.gitignore` | Adds `.afterimage/`, `afterimage/.afterimage-*` (a save's lock and work folders) and `node_modules/`. |
 | `vercel.json` | Creates it, or adds what is missing. Asks before it changes a value that is already set. See [deploying.md](deploying.md#vercel). |
 | `netlify.toml` | Creates it. An existing one is never edited: init prints the lines to add. See [deploying.md](deploying.md#netlify). |
 | The agent's copy | Only with `--agent`. Asks before it replaces a copy you have changed. |
@@ -60,7 +60,7 @@ Builds the prototype and saves it as the next version.
 - The version goes to `afterimage/versions/vN/`, and `afterimage/versions.json` lists it first. On success it prints `Saved v4 "Remember me".`
 - If the prototype is the same as the latest version, it prints `Nothing changed since v3 "Passkeys". Nothing was saved.` and exits 0.
 - It checks every saved version against its fingerprint first, and stops if one was edited.
-- One save runs at a time. While a save runs it holds `.afterimage-save.lock` in the history folder, and a second save stops with `Another save is active.` rather than waiting. A save that fails removes the lock itself. If a save was killed and left the lock behind, delete `afterimage/.afterimage-save.lock` once no save is running.
+- One save runs at a time. While a save runs it holds `.afterimage-save.lock` in the history folder, and a second save stops with `Another save is active.` rather than waiting. A save that fails removes the lock itself. A save that was killed (Ctrl-C, a timeout) leaves the lock and a work folder behind, and the next save clears both once that process has ended. If `Another save is active.` still shows when no save is running, delete `afterimage/.afterimage-save.lock`.
 - If the prototype changes while it is being saved, the save stops and saves nothing. Run it again once editing stops.
 
 ### What a save keeps

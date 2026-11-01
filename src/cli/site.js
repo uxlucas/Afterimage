@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sourceExcludes } from './config.js';
 import { readApp, verifyHistory } from './history.js';
+import { isLocked, retryLocked } from './retry.js';
 import { runBuild } from './run-build.js';
 
 // The package's own viewer and runtime, found from this file so they work from node_modules and from a checkout.
@@ -12,8 +13,6 @@ export const packagedRuntimeDir = fileURLToPath(new URL('../runtime/', import.me
 
 const servedFolder = 'afterimage';
 const keep = { recursive: true, force: true, maxRetries: 3 };
-const lockedCodes = new Set(['EPERM', 'EBUSY', 'EACCES']);
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const escapePattern = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Windows and macOS ignore case by default, so two spellings of one folder must compare equal there.
@@ -111,20 +110,13 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const staging = path.join(path.dirname(outDir), `${path.basename(outDir)}.tmp-${randomUUID().slice(0, 8)}`);
   const previous = `${staging}.old`;
-  // A locked file (a static server, an indexer) often clears on its own, so try once more before giving up.
   const rename = async (from, to) => {
     try {
-      await ops.rename(from, to);
+      await retryLocked(() => ops.rename(from, to));
     } catch (error) {
-      if (!lockedCodes.has(error.code)) throw error;
-      await wait(250);
-      try {
-        await ops.rename(from, to);
-      } catch (again) {
-        if (!lockedCodes.has(again.code)) throw again;
-        // The caller adds what became of the old site, which depends on how far the swap got.
-        throw Object.assign(new Error(`Could not replace ${config.out}: a file in it is in use. Close anything serving it (like afterimage dev or a static server) and run build again.`, { cause: again }), { locked: true });
-      }
+      if (!isLocked(error)) throw error;
+      // The caller adds what became of the old site, which depends on how far the swap got.
+      throw Object.assign(new Error(`Could not replace ${config.out}: a file in it is in use. Close anything serving it (like afterimage dev or a static server) and run build again.`, { cause: error }), { locked: true });
     }
   };
   try {

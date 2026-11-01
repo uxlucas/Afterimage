@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { validateManifest } from '../engine/manifest.js';
 import { injectFrameScript } from '../runtime/map.js';
+import { retryLocked } from './retry.js';
 
 // Finder, Explorer and macOS file copies leave these in any folder they touch. They are never part of a
 // prototype, so they are skipped rather than saved or treated as an error.
@@ -110,21 +111,58 @@ export async function verifyHistory(historyDir) {
   return manifest;
 }
 
+const lockName = '.afterimage-save.lock';
+const stagePrefix = '.afterimage-stage-';
+const busy = () => new Error(`Another save is active. If it crashed, delete ${lockName} in the history folder once no save is running.`);
+
+// Whether the save that wrote a lock is still running. Only a lock this code wrote, naming a process that no longer
+// exists (ESRCH), counts as dead; anything else (unreadable, another user's process) is left to its owner.
+function holderAlive(text) {
+  let pid;
+  try {
+    pid = JSON.parse(text)?.pid;
+  } catch {
+    return true;
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+// One save at a time. A save that was killed (Ctrl-C, an agent's timeout) never reaches its cleanup and leaves its lock
+// and stage folder behind; once its process is gone, both are cleared and this save goes ahead.
+async function takeLock(historyDir, lockPath) {
+  try {
+    return await fs.open(lockPath, 'wx');
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  if (holderAlive(await fs.readFile(lockPath, 'utf8').catch(() => ''))) throw busy();
+  for (const name of await fs.readdir(historyDir)) {
+    if (name.startsWith(stagePrefix)) await fs.rm(path.join(historyDir, name), { recursive: true, force: true });
+  }
+  await fs.rm(lockPath, { force: true });
+  try {
+    return await fs.open(lockPath, 'wx');
+  } catch (error) {
+    if (error.code === 'EEXIST') throw busy();
+    throw error;
+  }
+}
+
 export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { name, notes = [] }) {
   if (typeof name !== 'string' || !name.trim() || name.length > 120 ||
       !Array.isArray(notes) || notes.some(note => typeof note !== 'string' || !note.trim() || note.length > 500)) {
     throw new Error('Provide a version name up to 120 characters and notes up to 500 characters each.');
   }
   await fs.mkdir(historyDir, { recursive: true });
-  const lockPath = path.join(historyDir, '.afterimage-save.lock');
-  let lock;
-  try {
-    lock = await fs.open(lockPath, 'wx');
-  } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('Another save is active. If it crashed, delete .afterimage-save.lock in the history folder once no save is running.');
-    throw error;
-  }
-  const stage = path.join(historyDir, `.afterimage-stage-${randomUUID()}`);
+  const lockPath = path.join(historyDir, lockName);
+  const lock = await takeLock(historyDir, lockPath);
+  const stage = path.join(historyDir, `${stagePrefix}${randomUUID()}`);
   let destination;
   let promoted = false;
   let committed = false;
@@ -163,19 +201,20 @@ export async function saveVersion({ historyDir, sourceDir, exclude = [] }, { nam
     await fs.writeFile(stagedManifest, JSON.stringify(manifest, null, 2) + '\n');
     await fs.mkdir(path.join(historyDir, 'versions'), { recursive: true });
     destination = path.join(historyDir, 'versions', version.id);
-    await fs.rename(stagedSnapshot, destination);
+    await retryLocked(() => fs.rename(stagedSnapshot, destination));
     promoted = true;
     // Publish the manifest last so readers never see a half-written snapshot.
-    await fs.rename(stagedManifest, manifestPath(historyDir));
+    await retryLocked(() => fs.rename(stagedManifest, manifestPath(historyDir)));
     committed = true;
     return { version, unchanged: false };
   } finally {
-    try {
-      if (promoted && !committed) await fs.rm(destination, { recursive: true, force: true });
-      await fs.rm(stage, { recursive: true, force: true });
-    } finally {
-      await lock.close();
-      await fs.unlink(lockPath);
-    }
+    // Cleanup never replaces the outcome: a committed save is reported as saved, a failed one by its own error. What
+    // a failed step leaves behind is safe: an unlisted snapshot stops the next save by name, and the next save clears
+    // a lock and stage folder whose process is gone.
+    const quietly = step => step().catch(() => {});
+    if (promoted && !committed) await quietly(() => fs.rm(destination, { recursive: true, force: true }));
+    await quietly(() => fs.rm(stage, { recursive: true, force: true }));
+    await quietly(() => lock.close());
+    await quietly(() => fs.unlink(lockPath));
   }
 }

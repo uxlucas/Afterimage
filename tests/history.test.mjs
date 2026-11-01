@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -215,6 +216,73 @@ test('An active save lock prevents a second writer from changing the manifest', 
   await assert.rejects(saveVersion(options, { name: 'Must wait' }), /Another save is active/);
   assert.equal(await fs.readFile(path.join(historyDir, '.afterimage-save.lock'), 'utf8'), 'owned by another writer');
   assert.deepEqual(await readHistory(historyDir), before);
+});
+
+test('A lock whose save is still running is refused and left alone', async t => {
+  const { historyDir, options } = await fixture(t);
+  const before = await readHistory(historyDir);
+  const lock = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  await write(historyDir, { '.afterimage-save.lock': lock, '.afterimage-stage-live/snapshot/index.html': 'staging' });
+  await assert.rejects(saveVersion(options, { name: 'Must wait' }), /Another save is active/);
+  assert.equal(await fs.readFile(path.join(historyDir, '.afterimage-save.lock'), 'utf8'), lock);
+  assert.ok(await fs.stat(path.join(historyDir, '.afterimage-stage-live')));
+  assert.deepEqual(await readHistory(historyDir), before);
+});
+
+test('A lock left by a save that was killed is cleared with its stage folders, and the save goes ahead', async t => {
+  const { historyDir, options } = await fixture(t);
+  // A process that has already exited, so its pid names nothing.
+  const pid = Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout);
+  await write(historyDir, {
+    '.afterimage-save.lock': JSON.stringify({ pid, startedAt: '2026-01-01T00:00:00.000Z' }),
+    '.afterimage-stage-0d7e/snapshot/index.html': 'half saved'
+  });
+  const { version } = await saveVersion(options, { name: 'After a crash' });
+  assert.equal(version.id, 'v4');
+  assert.deepEqual(await leftovers(historyDir), []);
+});
+
+test('A failing cleanup never turns a committed save into a failure', async t => {
+  const { historyDir, options } = await fixture(t);
+  const lockPath = path.join(historyDir, '.afterimage-save.lock');
+  const unlink = fs.unlink;
+  t.mock.method(fs, 'unlink', async file => {
+    if (file === lockPath) throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+    return unlink(file);
+  });
+  const rm = fs.rm;
+  t.mock.method(fs, 'rm', async (file, options_) => {
+    if (path.basename(file).startsWith('.afterimage-stage-')) throw Object.assign(new Error('EPERM: injected'), { code: 'EPERM' });
+    return rm(file, options_);
+  });
+  const { version } = await saveVersion(options, { name: 'Saved anyway' });
+  assert.equal(version.id, 'v4');
+  assert.equal((await readHistory(historyDir)).versions[0].id, 'v4');
+});
+
+test('A failed save reports its own error, not a cleanup error after it', async t => {
+  const { historyDir, options } = await fixture(t);
+  await fs.appendFile(path.join(historyDir, 'versions', 'v1', 'index.html'), 'changed');
+  t.mock.method(fs, 'unlink', async () => { throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' }); });
+  await assert.rejects(saveVersion(options, { name: 'Must fail' }), /v1 has changed/);
+});
+
+test('A rename that hits a locked file is tried again', async t => {
+  const { historyDir, options } = await fixture(t);
+  const rename = fs.rename;
+  // Each target refuses its first rename, as a file an antivirus scanner still holds does.
+  const refused = new Set();
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (!refused.has(to)) {
+      refused.add(to);
+      throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+    }
+    return rename(from, to);
+  });
+  const { version } = await saveVersion(options, { name: 'Despite antivirus' });
+  assert.equal(version.id, 'v4');
+  assert.deepEqual([...refused].map(to => path.basename(to)), ['v4', 'versions.json']);
+  assert.equal((await verifyHistory(historyDir)).versions[0].id, 'v4');
 });
 
 test('An unlisted snapshot is never overwritten', async t => {

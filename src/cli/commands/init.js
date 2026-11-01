@@ -481,7 +481,8 @@ export async function run(args, ctx) {
       configPlan,
       packagePlan,
       await planLines(cwd, '.gitattributes', [`${configPlan.config.history}/** -text`], hasTextRule),
-      await planLines(cwd, '.gitignore', ['.afterimage/', 'node_modules/'], hasIgnore),
+      // The save's lock and stage folders too, which a killed save can leave in the history folder.
+      await planLines(cwd, '.gitignore', ['.afterimage/', `${configPlan.config.history}/.afterimage-*`, 'node_modules/'], hasIgnore),
       await planVercel(cwd, prompt),
       await planNetlify(cwd),
       await planAgent(cwd, agent, prompt)

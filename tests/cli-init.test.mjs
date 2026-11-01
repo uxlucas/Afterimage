@@ -67,7 +67,7 @@ test('init in a plain folder creates package.json and ignores node_modules', asy
     private: true,
     scripts: { 'afterimage:save': 'afterimage save', 'afterimage:dev': 'afterimage dev', 'afterimage:build': 'afterimage build' }
   });
-  assert.deepEqual(lines(await read(root, '.gitignore')).filter(Boolean), ['.afterimage/', 'node_modules/']);
+  assert.deepEqual(lines(await read(root, '.gitignore')).filter(Boolean), ['.afterimage/', 'afterimage/.afterimage-*', 'node_modules/']);
   assert.deepEqual(lines(await read(root, '.gitattributes')).filter(Boolean), ['afterimage/** -text']);
   assert.match(result.stdout, /^Created afterimage\.config\.json/m);
   assert.match(result.stdout, /^Created package\.json \(added 3 scripts\)$/m);
@@ -129,9 +129,9 @@ test('git files are appended without duplicating lines, in their own line ending
   await write(root, '.gitignore', 'dist\r\n/node_modules\r\n');
   await write(root, '.gitattributes', '* text=auto\nafterimage/** -text -diff');
   const result = await run(root);
-  assert.equal(await read(root, '.gitignore'), 'dist\r\n/node_modules\r\n.afterimage/\r\n');
+  assert.equal(await read(root, '.gitignore'), 'dist\r\n/node_modules\r\n.afterimage/\r\nafterimage/.afterimage-*\r\n');
   assert.equal(await read(root, '.gitattributes'), '* text=auto\nafterimage/** -text -diff');
-  assert.match(result.stdout, /^Updated \.gitignore \(added \.afterimage\/\)$/m);
+  assert.match(result.stdout, /^Updated \.gitignore \(added \.afterimage\/, afterimage\/\.afterimage-\*\)$/m);
   assert.doesNotMatch(result.stdout, /\.gitattributes/);
 });
 

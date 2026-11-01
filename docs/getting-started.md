@@ -47,7 +47,7 @@ Then it writes these files and lists each one it created or changed:
 - `afterimage.config.json`: where the prototype is and how it is built.
 - `package.json`: the scripts `afterimage:save`, `afterimage:dev` and `afterimage:build`.
 - `.gitattributes`: `afterimage/** -text`, so git never changes a saved version's line endings.
-- `.gitignore`: `.afterimage/` (the built site) and `node_modules/`.
+- `.gitignore`: `.afterimage/` (the built site), `afterimage/.afterimage-*` (a save's lock and work folders) and `node_modules/`.
 - `vercel.json` and `netlify.toml`: the host config. [deploying.md](deploying.md) explains each setting.
 
 Nothing is written until every step has worked, so a mistake leaves the project as it was. Running init again is safe: it only adds what is missing, and never overwrites a setting of yours without asking first. Read the notes it prints after the list of files; they are things only you can decide.
