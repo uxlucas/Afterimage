@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readConfig, writeConfig, projectExcludes } from '../src/cli/config.js';
+import { readConfig, writeConfig, projectExcludes, sourceExcludes } from '../src/cli/config.js';
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -94,12 +94,23 @@ test('a path that is absolute or leaves the project is rejected by field name', 
   assert.equal((await readConfig(root)).out, '..site');
 });
 
-test('a prototype at the project root leaves out the project\'s own docs, in any case and with any extension', () => {
-  const base = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'plain' };
-  const names = ['README.md', 'readme.txt', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md', 'index.html', 'readme-assets', 'READMEs.md', 'notes.md'];
-  const excluded = projectExcludes(base, names);
-  for (const name of ['README.md', 'readme.txt', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md']) assert.ok(excluded.includes(name), name);
-  for (const name of ['index.html', 'readme-assets', 'READMEs.md', 'notes.md']) assert.ok(!excluded.includes(name), name);
+const rootConfig = { source: '.', build: null, history: 'afterimage', out: '.afterimage/site', exclude: [], type: 'plain' };
+
+test('a prototype at the project root leaves out the project\'s own docs, by name and doc extension, in any case', () => {
+  const files = ['README.md', 'readme.txt', 'Readme.markdown', 'README.rst', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md', 'index.html', 'license.html', 'agents.html', 'readme.js', 'readme-assets', 'READMEs.md', 'notes.md'];
+  const excluded = projectExcludes(rootConfig, files);
+  for (const name of ['README.md', 'readme.txt', 'Readme.markdown', 'README.rst', 'LICENSE', 'License.md', 'CLAUDE.md', 'AGENTS.md']) assert.ok(excluded.includes(name), name);
+  for (const name of ['index.html', 'license.html', 'agents.html', 'readme.js', 'readme-assets', 'READMEs.md', 'notes.md']) assert.ok(!excluded.includes(name), name);
   // A build folder is the prototype itself, so its files are its own.
-  assert.deepEqual(projectExcludes({ ...base, source: 'dist' }, ['README.md']), []);
+  assert.deepEqual(projectExcludes({ ...rootConfig, source: 'dist' }, ['README.md']), []);
+});
+
+test('only files at the top are taken for docs: an agents/ folder is part of the prototype', async t => {
+  const root = await temp(t);
+  await fs.mkdir(path.join(root, 'agents'));
+  await fs.writeFile(path.join(root, 'agents/index.html'), '<h1>Agents</h1>');
+  for (const name of ['README.md', 'LICENSE', 'CLAUDE.md', 'license.html']) await fs.writeFile(path.join(root, name), 'x');
+  const excluded = await sourceExcludes(root, rootConfig);
+  for (const name of ['README.md', 'LICENSE', 'CLAUDE.md']) assert.ok(excluded.includes(name), name);
+  for (const name of ['agents', 'license.html']) assert.ok(!excluded.includes(name), name);
 });

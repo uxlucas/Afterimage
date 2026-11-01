@@ -127,3 +127,17 @@ test('the agent files only name commands and flags the CLI has', async () => {
     }
   }
 });
+
+// The prompt and the skill tell init's and dev's outcomes apart by what they print, so those words must stay in the CLI.
+test('each CLI message the setup prompt quotes is still printed by the CLI', async () => {
+  const cliDir = path.join(root, 'src/cli');
+  const files = (await fs.readdir(cliDir, { recursive: true })).filter(name => name.endsWith('.js'));
+  const source = (await Promise.all(files.map(name => fs.readFile(path.join(cliDir, name), 'utf8')))).join('\n');
+  const prompt = (await read(docsFile)).split('## Setup prompt')[1].match(/```text\n([\s\S]*?)\n```/)[1];
+  const skill = await read(skillFile);
+  for (const message of ['Say where the prototype is', 'no static build', 'Afterimage is running at']) {
+    assert.ok(prompt.includes(`\`${message}\``), `the prompt quotes ${message}`);
+    assert.ok(skill.includes(message), `the skill names ${message}`);
+    assert.ok(source.includes(message), `src/cli still prints ${message}`);
+  }
+});

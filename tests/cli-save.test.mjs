@@ -173,3 +173,15 @@ test('a plain folder at the project root saves without its README, LICENSE and a
     assert.ok(!await fs.stat(path.join(root, '.afterimage/site', name)).catch(() => null), `${name} is not deployed`);
   }
 });
+
+test('pages named like the docs stay in a save: license.html, agents.html and an agents/ folder', async t => {
+  const root = await temp(t);
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>Plain</h1>');
+  for (const name of ['license.html', 'agents.html', 'README.md', 'LICENSE', 'CLAUDE.md']) await fs.writeFile(path.join(root, name), '<p>page</p>');
+  await fs.mkdir(path.join(root, 'agents'));
+  await fs.writeFile(path.join(root, 'agents/index.html'), '<h1>Agents</h1>');
+  assert.equal((await run(root, ['init'])).code, 0);
+  const result = await run(root, ['save', 'First draft']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(await listing(path.join(root, 'afterimage/versions/v1')), ['agents', 'agents.html', path.join('agents', 'index.html'), 'index.html', 'license.html'].sort());
+});
