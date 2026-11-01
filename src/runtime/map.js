@@ -41,12 +41,17 @@ const prolog = /^(?:<!--[\s\S]*?-->|<\?[^>]*>|<!doctype[^>]*>)/i;
 const openTag = name => new RegExp(`^<${name}(?=[\\t\\n\\f\\r />])(?:[^>"']|"[^"]*"|'[^']*')*>`, 'i');
 const htmlTag = openTag('html');
 const headTag = openTag('head');
+const isDocument = /<!doctype[\t\n\f\r >]|<(?:html|head)(?=[\t\n\f\r />])/i;
 
 // Puts the frame tag first in <head>, inserting it and changing no other byte. Without a <head> tag it goes right
 // after <html ...>, else after the doctype and any comments, else at the start; the parser puts it in the head either
 // way. A page that already has the tag there (saved from a version's own files) only has its version id updated, so
 // a tag is never doubled and the same build always injects to the same bytes.
+// Only a page someone opens gets the tag, and a fragment a prototype fetches and inserts (htmx's hx-get, fetch and
+// innerHTML) is left as it is: a tag there would become its first child, and htmx would run it. A page is told apart by
+// a doctype, an <html> or a <head>, in any case.
 export function injectFrameScript(html, id) {
+  if (!isDocument.test(html)) return html;
   let position = bom.exec(html)?.[0].length ?? 0;
   let insertAt = position;
   const skip = pattern => {

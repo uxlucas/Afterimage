@@ -135,14 +135,22 @@ test('a byte order mark, a doctype and comments before <head> are stepped over',
   const page = '\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>\n';
   assert.equal(injectFrameScript(page, 'v1'), `\uFEFF<!-- built --><!DOCTYPE html>\n<!-- <head> in a comment -->\n<html>\n  <head>${tag('v1')}\n`);
   // The same bytes read as latin1, which is how a save reads them.
-  assert.equal(injectFrameScript('\xEF\xBB\xBF<p>hi</p>', 'v1'), `\xEF\xBB\xBF${tag('v1')}<p>hi</p>`);
+  assert.equal(injectFrameScript('\xEF\xBB\xBF<html><p>hi</p>', 'v1'), `\xEF\xBB\xBF<html>${tag('v1')}<p>hi</p>`);
 });
 
 test('a document with no <head> gets the tag after <html>, after the doctype, or at the start', () => {
   assert.equal(injectFrameScript('<!doctype html><html lang="en"><body>hi</body></html>', 'v2'), `<!doctype html><html lang="en">${tag('v2')}<body>hi</body></html>`);
   assert.equal(injectFrameScript('<!doctype html>\n<title>x</title><p>hi', 'v2'), `<!doctype html>${tag('v2')}\n<title>x</title><p>hi`);
-  assert.equal(injectFrameScript('<h1>One</h1>', 'v2'), `${tag('v2')}<h1>One</h1>`);
-  assert.equal(injectFrameScript('', 'v2'), tag('v2'));
+  assert.equal(injectFrameScript('<meta charset="utf-8"><head><title>x</title>', 'v2'), `${tag('v2')}<meta charset="utf-8"><head><title>x</title>`);
+});
+
+test('a fragment a prototype fetches and inserts is left byte for byte; a doctype, <html> or <head> in any case makes a page', () => {
+  for (const fragment of ['<h1>One</h1>', '', '<li>Row</li><header>h</header>', '<div hx-get="/rows">x</div>', '\xEF\xBB\xBF<p>hi</p>', '<htmlish>x</htmlish>']) {
+    assert.equal(injectFrameScript(fragment, 'v2'), fragment);
+  }
+  assert.equal(injectFrameScript('<!DocType html><p>x', 'v2'), `<!DocType html>${tag('v2')}<p>x`);
+  assert.equal(injectFrameScript('<HTML><p>x', 'v2'), `<HTML>${tag('v2')}<p>x`);
+  assert.equal(injectFrameScript('<Head><title>x</title>', 'v2'), `<Head>${tag('v2')}<title>x</title>`);
 });
 
 test('injecting never touches another byte, and is never doubled', () => {
@@ -152,7 +160,7 @@ test('injecting never touches another byte, and is never doubled', () => {
   assert.equal(injectFrameScript(once, 'v4'), once);
   // A page that came from another saved version is re-labelled, not given a second tag. Same without a <head>.
   assert.equal(injectFrameScript(injectFrameScript(page, 'v1'), 'v4'), once);
-  for (const bare of ['<h1>One</h1>', '<!doctype html>\n<p>x', '<html><body>x</body></html>']) {
+  for (const bare of ['<head><title>x</title>', '<!doctype html>\n<p>x', '<html><body>x</body></html>']) {
     assert.equal(injectFrameScript(injectFrameScript(bare, 'v1'), 'v4'), injectFrameScript(bare, 'v4'));
   }
 });
@@ -173,24 +181,27 @@ test('a save puts the frame script in every saved page, and the same build saved
   const historyDir = path.join(root, 'afterimage');
   await fs.mkdir(path.join(sourceDir, 'about'), { recursive: true });
   await fs.writeFile(path.join(sourceDir, 'index.html'), '<!doctype html><html><head><title>Home</title></head></html>');
-  await fs.writeFile(path.join(sourceDir, 'about/index.html'), '<p>About</p>');
+  await fs.writeFile(path.join(sourceDir, 'about/index.html'), '<html><p>About</p>');
   await fs.writeFile(path.join(sourceDir, 'style.css'), '<head>');
+  await fs.writeFile(path.join(sourceDir, 'row.html'), '<li>Row</li>');
   const options = { historyDir, sourceDir, exclude: [] };
 
   const first = await saveVersion(options, { name: 'First' });
   const saved = path.join(historyDir, 'versions/v1');
   assert.equal(await fs.readFile(path.join(saved, 'index.html'), 'utf8'), `<!doctype html><html><head>${tag('v1')}<title>Home</title></head></html>`);
-  assert.equal(await fs.readFile(path.join(saved, 'about/index.html'), 'utf8'), `${tag('v1')}<p>About</p>`);
+  assert.equal(await fs.readFile(path.join(saved, 'about/index.html'), 'utf8'), `<html>${tag('v1')}<p>About</p>`);
   assert.equal(await fs.readFile(path.join(saved, 'style.css'), 'utf8'), '<head>');
+  // A fragment the page fetches is not a page: it is saved as built.
+  assert.equal(await fs.readFile(path.join(saved, 'row.html'), 'utf8'), '<li>Row</li>');
   // The fingerprint covers the bytes as saved, so the history verifies.
   assert.equal(first.version.sha256, fingerprint(await readSnapshot(saved)));
   await verifyHistory(historyDir);
 
   assert.equal((await saveVersion(options, { name: 'Again' })).unchanged, true);
-  await fs.writeFile(path.join(sourceDir, 'about/index.html'), '<p>About us</p>');
+  await fs.writeFile(path.join(sourceDir, 'about/index.html'), '<html><p>About us</p>');
   const second = await saveVersion(options, { name: 'Second' });
   assert.equal(second.version.id, 'v2');
-  assert.equal(await fs.readFile(path.join(historyDir, 'versions/v2/about/index.html'), 'utf8'), `${tag('v2')}<p>About us</p>`);
+  assert.equal(await fs.readFile(path.join(historyDir, 'versions/v2/about/index.html'), 'utf8'), `<html>${tag('v2')}<p>About us</p>`);
   assert.equal(await fs.readFile(path.join(historyDir, 'versions/v2/index.html'), 'utf8'), `<!doctype html><html><head>${tag('v2')}<title>Home</title></head></html>`);
 });
 

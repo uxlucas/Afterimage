@@ -7,7 +7,6 @@ import path from 'node:path';
 import { main } from '../src/cli/main.js';
 import { readConfig, writeConfig } from '../src/cli/config.js';
 import { startDev } from '../src/cli/commands/dev.js';
-import { frameTag } from '../src/runtime/map.js';
 
 async function temp(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-test-'));
@@ -114,7 +113,7 @@ test('dev serves the history at /afterimage/ from its own folder and never touch
   assert.equal(await page.text(), '<title>viewer</title>');
   const manifest = await (await get(dev, '/afterimage/versions.json')).json();
   assert.deepEqual(manifest.versions.map(version => version.id), ['v1']);
-  assert.equal(await (await get(dev, '/afterimage/versions/v1/index.html')).text(), `${frameTag('v1')}<h1>One</h1>`);
+  assert.equal(await (await get(dev, '/afterimage/versions/v1/index.html')).text(), '<h1>One</h1>');
 
   assert.equal((await get(dev, '/afterimage/nope.txt')).status, 404);
   const toViewer = await get(dev, '/afterimage', { redirect: 'manual' });
@@ -200,7 +199,7 @@ test('a save made while dev runs shows up without restarting it', async t => {
   assert.equal(events.updates.at(-1).versions, 2);
   const manifest = await (await get(dev, '/afterimage/versions.json')).json();
   assert.deepEqual(manifest.versions.map(version => version.id), ['v2', 'v1']);
-  assert.equal(await (await get(dev, '/afterimage/versions/v2/index.html')).text(), `${frameTag('v2')}<h1>Two</h1>`);
+  assert.equal(await (await get(dev, '/afterimage/versions/v2/index.html')).text(), '<h1>Two</h1>');
   assert.deepEqual(events.errors, []);
 });
 
@@ -217,10 +216,10 @@ test('a damaged history reports the error and keeps serving the last good site',
 
   assert.match(events.errors[0].message, /v1 has changed since it was saved/);
   assert.equal(events.updates.length, 0);
-  assert.equal(await (await get(dev, '/afterimage/versions/v1/index.html')).text(), `${frameTag('v1')}<h1>One</h1>`);
+  assert.equal(await (await get(dev, '/afterimage/versions/v1/index.html')).text(), '<h1>One</h1>');
 
   // Putting the file back and touching the manifest again recovers on its own.
-  await fs.writeFile(path.join(history, 'versions/v1/index.html'), `${frameTag('v1')}<h1>One</h1>`);
+  await fs.writeFile(path.join(history, 'versions/v1/index.html'), '<h1>One</h1>');
   await fs.writeFile(manifestFile, await fs.readFile(manifestFile));
   await until(() => events.updates.length > 0, 'dev to recover');
 });
