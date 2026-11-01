@@ -230,10 +230,18 @@ function watchRequests(page, origin, appMisses) {
     const own = pathname.replace(/^\/afterimage\/versions\/v[1-9]\d*(?=\/)/, '');
     return pathname !== '/favicon.ico' && !appMisses.some(pattern => pattern.test(own));
   };
+  // Root paths the app at / asked for itself, with how many times: the page's own frame, while it held the app and not
+  // the viewer. The app goes on asking after the page looks settled (Next prefetches once it has hydrated, which on a
+  // slow machine comes later), so those requests can reach the server during the next step.
+  const fromApp = new Map();
   page.on('framenavigated', frame => moves.set(frame, (moves.get(frame) ?? 0) + 1));
   page.on('request', request => {
     const frame = frameOf(request);
     if (frame) startedAt.set(request, moves.get(frame) ?? 0);
+    const asked = new URL(request.url());
+    if (frame === page.mainFrame() && asked.origin === origin && !isServedPath(asked.pathname) && !isServedPath(new URL(frame.url()).pathname)) {
+      fromApp.set(asked.pathname, (fromApp.get(asked.pathname) ?? 0) + 1);
+    }
   });
   page.on('response', response => {
     answered.add(response.request());
@@ -250,6 +258,12 @@ function watchRequests(page, origin, appMisses) {
     return Boolean(frame) && !frame.isDetached() && (moves.get(frame) ?? 0) === startedAt.get(request);
   };
   return {
+    // True, once for each time the app at / asked for `pathname`: the server saw one of the app's own requests.
+    fromApp(pathname) {
+      const count = fromApp.get(pathname) ?? 0;
+      if (count > 0) fromApp.set(pathname, count - 1);
+      return count > 0;
+    },
     // Returns what failed since the last call and starts over.
     take() {
       const taken = [...failures, ...aborted.filter(stayed).map(request => `net::ERR_ABORTED ${request.url()}`)];
@@ -325,11 +339,14 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     const requests = watchRequests(page, server.origin, appMisses);
     // atRoot: the step opened the app at / itself, so root paths are expected there.
     const noFailures = (step, { atRoot = false } = {}) => {
-      const reached = server.take().filter(pathname => !atRoot && !pathname.startsWith('/afterimage/'));
+      // Every root path is checked against the app's own requests, in its own step too, so that one it made there is
+      // not left to excuse a version's request for the same path later.
+      const reached = server.take().filter(pathname => !pathname.startsWith('/afterimage/') && !requests.fromApp(pathname) && !atRoot);
       assert.deepEqual([...requests.take(), ...reached.map(pathname => `reached the live app at the root: ${pathname}`)], [], `${step}: these requests failed`);
     };
     // An app goes on asking for files after load (Next prefetches the pages it links to). Waiting for the network to go
-    // quiet keeps those requests in the step that opened the app at /, where root paths are expected.
+    // quiet keeps most of those requests in the step that opened the app at /, where root paths are expected; the ones
+    // that come later still count as the app's own (see fromApp in watchRequests).
     const settle = () => page.waitForLoadState('networkidle', { timeout: loadTimeout });
     const viewer = query => page.goto(`${server.origin}/afterimage/?${query}`, { waitUntil: 'load', timeout: loadTimeout });
     const highlight = page.getByRole('button', { name: /^Highlight changes, \d+ changes?$/ });
