@@ -703,6 +703,14 @@ test('only outputDirectory differing asks about the output', async t => {
   assert.deepEqual(result.questions, ["vercel.json already serves dist. Switch it to Afterimage's output? (y/N)"]);
 });
 
+test('only buildCommand differing asks about the build', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  await write(root, 'vercel.json', JSON.stringify({ buildCommand: 'npm run build' }));
+  const result = await run(root, [], { answers: ['n'] });
+  assert.deepEqual(result.questions, ["vercel.json already builds with npm run build. Switch it to Afterimage's build? (y/N)"]);
+});
+
 test('a closed terminal answers no to the vercel question and still reports', async t => {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');

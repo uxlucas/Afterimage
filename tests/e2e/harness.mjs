@@ -36,7 +36,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { readConfig } from '../../src/cli/config.js';
-import { cleanUrlRewrite } from '../../src/cli/commands/init.js';
+import { cleanUrlRewrite } from '../../src/cli/hosts.js';
 import { fileFor, requestPath, sendFile, TYPES } from '../../src/cli/static-files.js';
 import { entryPath } from '../../src/viewer/frames.js';
 import { isServedPath } from '../../src/runtime/map.js';
