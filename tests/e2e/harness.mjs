@@ -32,10 +32,12 @@
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { readConfig } from '../../src/cli/config.js';
+import { cleanUrlRewrite } from '../../src/cli/commands/init.js';
 import { fileFor, requestPath, sendFile } from '../../src/cli/static-files.js';
 import { entryPath } from '../../src/viewer/frames.js';
 import { isServedPath } from '../../src/runtime/map.js';
@@ -80,6 +82,83 @@ async function serve(root) {
       return taken;
     },
     close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); })
+  };
+}
+
+const plainTypes = { html: 'text/html; charset=utf-8', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css', json: 'application/json', txt: 'text/plain; charset=utf-8', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', ico: 'image/x-icon', woff2: 'font/woff2', map: 'application/json' };
+
+// The rewrite init writes to vercel.json, as a test on the path. "/:path(<pattern>)" is the one source shape init uses,
+// so only that shape is understood here.
+function rewriteTest({ source, destination }) {
+  const pattern = /^\/:path\((.+)\)$/.exec(source)?.[1];
+  assert.ok(pattern && destination === '/:path*.html', `The vercel.json rewrite has a shape the test host does not know: ${source} -> ${destination}`);
+  const expression = new RegExp(`^/(${pattern})$`);
+  return pathname => expression.test(pathname);
+}
+
+// A copy of `site` in a fresh folder, served the way Vercel and Netlify serve static output, with nothing of Afterimage's
+// own in the way: a path maps straight to a file (/x/ to x/index.html, /x to x and nothing else), a miss is a 404 with the
+// site's own 404.html, and there is no SPA fallback and no special route. The folder name has a space and the port is
+// whichever is free, so nothing may rely on where it lives. Unlike serve(), it never sees the checkout it was built in.
+// cleanUrls says how the host treats clean URLs:
+//   'none' (the default)  nothing: /about is a 404 when only about.html exists.
+//   'rewrite'             what init writes to vercel.json: a path with no file of its name is answered from <path>.html
+//                         when that exists, except under /afterimage/. Nothing is redirected.
+//   'redirect'            Vercel's cleanUrls: true: /x.html goes to /x and /dir/index.html to /dir with a 308 (the form
+//                         that leaves the trailing slash off, which is the harder one for the runtime), and /x is
+//                         answered from x.html or x/index.html. It covers /afterimage/ too, as the setting is site-wide.
+// Returns { origin, root, take, close } like serve().
+async function servePlain(site, { cleanUrls = 'none' } = {}) {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage e2e host-'));
+  const root = path.join(parent, 'site root');
+  await fs.cp(site, root, { recursive: true });
+  const rewrites = cleanUrls === 'rewrite' ? rewriteTest(cleanUrlRewrite) : () => false;
+  let seen = [];
+  const send = async (res, method, file, status = 200) => {
+    const data = await fs.readFile(file);
+    res.writeHead(status, { 'Content-Type': plainTypes[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': data.length });
+    res.end(method === 'HEAD' ? undefined : data);
+  };
+  // The file a path names, and no other: a path that ends in / names the folder's index.html.
+  const find = async pathname => {
+    const file = path.join(root, ...pathname.split('/').filter(Boolean), pathname.endsWith('/') ? 'index.html' : '');
+    return file.startsWith(root + path.sep) && await isFile(file) ? file : null;
+  };
+  const server = http.createServer(async (req, res) => {
+    const pathname = requestPath(req.url);
+    if (pathname === null) { res.writeHead(400).end(); return; }
+    if (pathname !== '/favicon.ico') seen.push(pathname);
+    if (cleanUrls === 'redirect' && pathname.endsWith('.html') && await find(pathname)) {
+      const clean = pathname === '/index.html' || pathname.endsWith('/index.html') ? pathname.slice(0, -'/index.html'.length) || '/' : pathname.slice(0, -'.html'.length);
+      res.writeHead(308, { Location: clean + new URL(req.url, 'http://localhost').search }).end();
+      return;
+    }
+    let file = await find(pathname);
+    if (!file && !pathname.endsWith('/')) {
+      if (cleanUrls === 'redirect') file = await find(`${pathname}.html`) ?? await find(`${pathname}/`);
+      else if (rewrites(pathname)) file = await find(`${pathname}.html`);
+    }
+    if (file) { await send(res, req.method, file); return; }
+    const missing = await find('/404.html');
+    if (missing) await send(res, req.method, missing, 404);
+    else res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    root,
+    take() {
+      const taken = seen;
+      seen = [];
+      return taken;
+    },
+    close: async () => {
+      await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+      await fs.rm(parent, { recursive: true, force: true });
+    }
   };
 }
 
@@ -197,15 +276,17 @@ async function readFrame(page, version, shows = '') {
   });
 }
 
-// checkExample(exampleDir, { expectChange, expectCount, press, follow, build, appPath, appMisses }) → Report. Throws (with the failing URL or step) when anything is off.
+// checkExample(exampleDir, { expectChange, expectCount, press, follow, build, appPath, appMisses, plain }) → Report. Throws (with the failing URL or step) when anything is off.
 // expectChange is text the newest version shows and the one before it does not, and it must appear in the change list.
 // expectCount is the exact change count between the two newest versions (see the header).
 // build replaces the npm script, for a folder that has no node_modules of its own (a temporary copy of a fixture).
 // appPath is where the app at / ends up once loaded, for an app that moves itself (a locale or sign-in redirect).
 // appMisses (RegExps on the app's own path) are files the app asks for and its own build lacks; see watchRequests.
+// plain serves a fresh copy of the built site from a temporary folder through a plain static host (servePlain) instead of
+// serve(): true, or { cleanUrls } to pick how that host treats clean URLs. The report's host is { root, cleanUrls }.
 // press ({ button, shows }) clicks the button named `button` inside the newest version's frame and waits for its name
 // to become `shows`: only a page whose scripts ran (one that hydrated) can change it.
-export async function checkExample(exampleDir, { expectChange, expectCount, press, follow, build = npmBuild, appPath = '/', appMisses = [] }) {
+export async function checkExample(exampleDir, { expectChange, expectCount, press, follow, build = npmBuild, appPath = '/', appMisses = [], plain }) {
   assert.ok(expectChange || expectCount !== undefined, 'checkExample needs expectChange (text the newest version adds) or expectCount.');
   build(exampleDir);
   const config = await readConfig(exampleDir);
@@ -213,7 +294,8 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
   const { versions } = JSON.parse(await fs.readFile(path.join(site, 'afterimage/versions.json'), 'utf8'));
   assert.ok(versions.length >= 2, `${exampleDir} needs at least two saved versions to check changes.`);
 
-  const server = await serve(site);
+  const cleanUrls = plain?.cleanUrls ?? 'none';
+  const server = plain ? await servePlain(site, { cleanUrls }) : await serve(site);
   let browser;
   try {
     browser = await chromium.launch({ channel: 'chrome' });
@@ -232,7 +314,7 @@ export async function checkExample(exampleDir, { expectChange, expectCount, pres
     const storedCounts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
       .filter(key => key.startsWith('afterimage-count:'))
       .map(key => [key, JSON.parse(localStorage.getItem(key)).summary])));
-    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], pressed: null, followed: null, changes: null };
+    const report = { example: path.basename(path.resolve(exampleDir)), app: null, versions: [], pressed: null, followed: null, changes: null, host: plain ? { root: server.root, cleanUrls } : null };
 
     // The app at the root loads as its own build does.
     const response = await page.goto(`${server.origin}/`, { waitUntil: 'load', timeout: loadTimeout });

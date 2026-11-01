@@ -19,63 +19,145 @@ function afterimage(cwd, ...args) {
   return result.stdout;
 }
 
+// What each example is held to, and what its report must show. The tests below run these through two hosts: the harness's
+// own server, and a plain static host (see the end of this block).
+const checks = {
+  northwind: {
+    options: { expectChange: 'Sign in with passkey' },
+    verify: report => assert.deepEqual(report.versions.map(version => version.id), ['v3', 'v2', 'v1'])
+  },
+  'vite-react': {
+    options: { expectChange: 'Ship the prototype', follow: { link: 'About this app', shows: 'A second route' } },
+    verify: report => {
+      assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+      // The router sees its own path, and the click stayed in the version it started in.
+      assert.equal(report.followed.path, '/about');
+    }
+  },
+  'next-static': {
+    // Next 16.4.3's export (next/dist/export/index.js) names a segment file from path.relative, then replaces only "/"
+    // with ".". On Windows that path has backslashes, so the build writes about/__next.about/__PAGE__.txt, while the
+    // router asks for about/__next.about.__PAGE__.txt and falls back to about.txt when it is missing. The committed
+    // history was built on Windows, so its versions miss the file on every OS, and so does the live app at / when it is
+    // built on Windows. A build elsewhere writes the dot form, which the live app then finds.
+    options: { expectChange: 'Launch day is Friday', follow: { link: 'About this site', shows: 'A second page' }, appMisses: [/^\/about\/__next\.about\.__PAGE__\.txt$/] },
+    verify: report => {
+      assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+      // The App Router took the click (the document is still the entry page) and moved to its own clean path.
+      assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
+    }
+  },
+  astro: {
+    options: { expectChange: 'Field notes from the coast', follow: { link: 'About this site', shows: 'A second page' } },
+    verify: report => {
+      assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+      // Astro writes about/index.html and links to /about. The click loads a new document, which the worker answers with a
+      // redirect to /about/, as a host would.
+      assert.deepEqual([report.followed.path, report.followed.file], ['/about/', '/afterimage/versions/v2/about/']);
+    }
+  },
+  'sveltekit-static': {
+    options: {
+      expectChange: 'Welcome back to the studio',
+      // The counter's state changes only once the page has hydrated.
+      press: { button: 'Count is 0', shows: 'Count is 1' },
+      follow: { link: 'About this site', shows: 'A second route' }
+    },
+    verify: report => {
+      assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
+      assert.ok(report.pressed);
+      // The router took the click too, so the document is still the entry page.
+      assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
+    }
+  }
+};
+
+// The root is the app's own build, byte for byte: nothing Afterimage adds reaches it.
+async function assertRootUntouched(dir, built) {
+  const site = path.join(dir, '.afterimage/site');
+  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, built, 'index.html')));
+}
+
 test('northwind: every version renders and v3 shows its changes', async () => {
-  const report = await checkExample(example('northwind'), { expectChange: 'Sign in with passkey' });
-  assert.deepEqual(report.versions.map(version => version.id), ['v3', 'v2', 'v1']);
+  checks.northwind.verify(await checkExample(example('northwind'), checks.northwind.options));
 });
 
 test('vite-react: home and /about render inside the viewer, the live app at / is untouched', async () => {
   const dir = example('vite-react');
-  const report = await checkExample(dir, { expectChange: 'Ship the prototype', follow: { link: 'About this app', shows: 'A second route' } });
-  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
-  // The router sees its own path, and the click stayed in the version it started in.
-  assert.equal(report.followed.path, '/about');
-  // The root is the app's own build, byte for byte: nothing Afterimage adds reaches it.
-  const site = path.join(dir, '.afterimage/site');
-  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'dist/index.html')));
+  checks['vite-react'].verify(await checkExample(dir, checks['vite-react'].options));
+  await assertRootUntouched(dir, 'dist');
 });
 
 test('next-static: home and /about render inside the viewer, the live app at / is untouched', async () => {
   const dir = example('next-static');
-  // Next 16.4.3's export (next/dist/export/index.js) names a segment file from path.relative, then replaces only "/"
-  // with ".". On Windows that path has backslashes, so the build writes about/__next.about/__PAGE__.txt, while the
-  // router asks for about/__next.about.__PAGE__.txt and falls back to about.txt when it is missing. The committed
-  // history was built on Windows, so its versions miss the file on every OS, and so does the live app at / when it is
-  // built on Windows. A build elsewhere writes the dot form, which the live app then finds.
-  const appMisses = [/^\/about\/__next\.about\.__PAGE__\.txt$/];
-  const report = await checkExample(dir, { expectChange: 'Launch day is Friday', follow: { link: 'About this site', shows: 'A second page' }, appMisses });
-  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
-  // The App Router took the click (the document is still the entry page) and moved to its own clean path.
-  assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
-  const site = path.join(dir, '.afterimage/site');
-  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'out/index.html')));
+  checks['next-static'].verify(await checkExample(dir, checks['next-static'].options));
+  await assertRootUntouched(dir, 'out');
 });
 
 test('astro: both pages render inside the viewer, and a hard link stays in the version', async () => {
   const dir = example('astro');
-  const report = await checkExample(dir, { expectChange: 'Field notes from the coast', follow: { link: 'About this site', shows: 'A second page' } });
-  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
-  // Astro writes about/index.html and links to /about. The click loads a new document, which the worker answers with a
-  // redirect to /about/, as a host would.
-  assert.deepEqual([report.followed.path, report.followed.file], ['/about/', '/afterimage/versions/v2/about/']);
-  const site = path.join(dir, '.afterimage/site');
-  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'dist/index.html')));
+  checks.astro.verify(await checkExample(dir, checks.astro.options));
+  await assertRootUntouched(dir, 'dist');
 });
 
 test('sveltekit-static: both prerendered routes render inside the viewer, and the page hydrates', async () => {
   const dir = example('sveltekit-static');
-  const report = await checkExample(dir, {
-    expectChange: 'Welcome back to the studio',
-    // The counter's state changes only once the page has hydrated.
-    press: { button: 'Count is 0', shows: 'Count is 1' },
-    follow: { link: 'About this site', shows: 'A second route' },
+  checks['sveltekit-static'].verify(await checkExample(dir, checks['sveltekit-static'].options));
+  await assertRootUntouched(dir, 'build');
+});
+
+// Stands in for a Vercel or Netlify deployment until a real preview can be tried (spec criterion 3): a fresh copy of the
+// built site, in a folder with a space in its name, on an unexpected port, served by a host that maps paths straight to
+// files. The first test is the main one. The rest show the worker's clean-URL fallback doing its job on a host that has
+// no clean URLs of its own: Next's about.html, SvelteKit's about.html and Astro's about/index.html all have to be found.
+function assertPlainHost(report, cleanUrls = 'none') {
+  assert.equal(report.host.cleanUrls, cleanUrls);
+  assert.match(report.host.root, / /, 'The host folder has no space in its path');
+  assert.ok(!path.resolve(report.host.root).startsWith(path.resolve(example('vite-react'), '..')), 'The host folder is inside the examples');
+}
+
+test('the site works from a fresh copy of out/ served by a plain static server', async () => {
+  const dir = example('vite-react');
+  const report = await checkExample(dir, { ...checks['vite-react'].options, plain: true });
+  assertPlainHost(report);
+  checks['vite-react'].verify(report);
+});
+
+for (const name of ['northwind', 'astro', 'sveltekit-static']) {
+  test(`${name}: the same checks pass from a plain static server`, async () => {
+    const report = await checkExample(example(name), { ...checks[name].options, plain: true });
+    assertPlainHost(report);
+    checks[name].verify(report);
   });
-  assert.deepEqual(report.versions.map(version => version.id), ['v2', 'v1']);
-  assert.ok(report.pressed);
-  // The router took the click too, so the document is still the entry page.
-  assert.deepEqual([report.followed.path, report.followed.file], ['/about', '/afterimage/versions/v2/index.html']);
-  const site = path.join(dir, '.afterimage/site');
-  assert.deepEqual(await fs.readFile(path.join(site, 'index.html')), await fs.readFile(path.join(dir, 'build/index.html')));
+}
+
+// Next links to /about and writes about.html. The versions get there through the worker's fallback on any host. The live
+// app at / needs the host to answer /about itself (Next sends HEAD /about before it prefetches the page), which a
+// plain host does not, and which init's vercel.json rewrite supplies (a static host given no framework of its own).
+test('next-static: the live app at / needs clean URLs from its host, and the rewrite init writes gives them', async () => {
+  const dir = example('next-static');
+  await assert.rejects(checkExample(dir, { ...checks['next-static'].options, plain: true }), /App at \/: these requests failed[\s\S]*404 \S+\/about\b/);
+  const report = await checkExample(dir, { ...checks['next-static'].options, plain: { cleanUrls: 'rewrite' } });
+  assertPlainHost(report, 'rewrite');
+  checks['next-static'].verify(report);
+});
+
+// Why init does not write cleanUrls: true. It is site-wide, so /afterimage/versions/vN/index.html is redirected out of the
+// version folder (and about.html to about), and the frame runtime and the viewer, which match on those exact paths, never
+// settle on the version. The host here is an emulation of the documented behaviour; if the runtime ever learns to follow
+// such a redirect, this test is the one to turn around.
+test('a host with cleanUrls: true redirects a version out of its folder, and the viewer cannot show it', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'afterimage-e2e-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.cp(fixture('multipage'), dir, { recursive: true });
+  afterimage(dir, 'init');
+  afterimage(dir, 'save', 'One');
+  const page = path.join(dir, 'index.html');
+  await fs.writeFile(page, (await fs.readFile(page, 'utf8')).replace('<h1>Page one</h1>', '<h1>Page one, revised</h1>'));
+  afterimage(dir, 'save', 'Two');
+  const build = () => afterimage(dir, 'build');
+  await checkExample(dir, { expectChange: 'Page one, revised', build, plain: { cleanUrls: 'rewrite' } });
+  await assert.rejects(checkExample(dir, { expectChange: 'Page one, revised', build, plain: { cleanUrls: 'redirect' } }), /Timeout 15000ms exceeded/);
 });
 
 // The harness itself: a version that lost one of its files must fail the check, or the passes above mean nothing.

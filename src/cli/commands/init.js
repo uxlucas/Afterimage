@@ -18,6 +18,14 @@ const scripts = {
 const hostBuild = 'npm run afterimage:build';
 const hostOutput = '.afterimage/site';
 
+// Clean URLs for the live app at the root, on Vercel: /about is answered from about.html (Next's and SvelteKit's static
+// exports write that and link to /about). Vercel only does so by default for a framework it builds itself, and the
+// history is deployed as a plain folder (framework: null, below). cleanUrls: true would give the same, site-wide, and
+// redirect /afterimage/versions/vN/index.html to a path that is no longer inside the version folder, which the frame
+// runtime and the viewer cannot follow. A rewrite is not a redirect, only applies where no file has the path (Vercel
+// checks the filesystem first), and this one leaves /afterimage/ out altogether. tests/e2e/harness.mjs reads it.
+export const cleanUrlRewrite = { source: '/:path((?!afterimage/|afterimage$).+)', destination: '/:path*.html' };
+
 // Task 12 ships the skill here; the setup prompt copies it into the agent's own folder.
 const skillHint = 'Agent skill: node_modules/afterimage-cli/agents/skill/ (copy it to .claude/skills/afterimage/)';
 
@@ -205,50 +213,112 @@ const hasTextRule = (existing, rule) => {
 const stripSlashes = line => line.trim().replace(/^\/+|\/+$/g, '');
 const hasIgnore = (existing, line) => stripSlashes(existing) === stripSlashes(line);
 
-const hostValues = `  "buildCommand": "${hostBuild}",\n  "outputDirectory": "${hostOutput}"`;
+// What vercel.json needs for the history to deploy, in the order it is written.
+// framework: null ("Other") makes Vercel serve the output folder as plain files. With a framework detected, Vercel's own
+// builder takes over instead: for Next.js, @vercel/next finds .next/export-detail.json after the build and serves the
+// export's folder (out/), not outputDirectory, so /afterimage/ would not deploy. Next.js is the one read in the builder's
+// source; the others are set the same way so no preset can do the same. The preset's own clean URLs go with it, which is
+// what cleanUrlRewrite replaces.
+const hostSettings = { framework: null, buildCommand: hostBuild, outputDirectory: hostOutput };
+const hostKeys = [...Object.keys(hostSettings), 'rewrites'];
+const hostValues = JSON.stringify({ ...hostSettings, rewrites: [cleanUrlRewrite] }, null, 2).slice(2, -2);
+
+const sameRewrite = rewrite => rewrite?.source === cleanUrlRewrite.source && rewrite?.destination === cleanUrlRewrite.destination;
+
+const cleanUrlsNote = 'vercel.json has "cleanUrls": true. It also redirects the history\'s own pages (/afterimage/versions/vN/index.html), so the history will not open. Remove it: Afterimage\'s rewrite gives the live app clean URLs without touching /afterimage/.';
 
 async function planVercel(cwd, { isTTY, ask }) {
   const file = path.join(cwd, 'vercel.json');
   const { bom, body: before } = await readJsonText(file);
-  const wanted = { buildCommand: hostBuild, outputDirectory: hostOutput };
   const settings = before === null ? {} : parseJson(before, 'vercel.json');
-  // null means "use the default" in vercel.json, so it is as free as a missing key.
-  const differs = Object.keys(wanted).filter(key => settings[key] != null && settings[key] !== wanted[key]);
-  const missing = Object.keys(wanted).filter(key => settings[key] == null);
-  if (!differs.length && !missing.length) return { change: null, notes: [], apply: null };
+  const notes = [];
+
+  // null means "use the default" in vercel.json, so it is as free as a missing key. For framework it is the wanted
+  // value itself ("Other"), so only a framework that is named differs.
+  const differs = ['buildCommand', 'outputDirectory'].filter(key => settings[key] != null && settings[key] !== hostSettings[key]);
+  if (typeof settings.framework === 'string') differs.push('framework');
+  const missing = ['buildCommand', 'outputDirectory'].filter(key => settings[key] == null);
+  if (!Object.hasOwn(settings, 'framework')) missing.push('framework');
+  const set = [...missing];
+
+  // The rewrite goes after the project's own, which keep their order. cleanUrls: true is left to the person (and called
+  // out), as are rewrites that are not a list.
+  let rewrites = null;
+  if (settings.cleanUrls === true) {
+    notes.push(cleanUrlsNote);
+  } else if (settings.rewrites !== undefined && !Array.isArray(settings.rewrites)) {
+    notes.push(`vercel.json "rewrites" is not a list, so Afterimage left it alone. Add this to it for clean URLs on the live app:\n${JSON.stringify(cleanUrlRewrite, null, 2)}`);
+  } else if (!(settings.rewrites ?? []).some(sameRewrite)) {
+    rewrites = [...(settings.rewrites ?? []), cleanUrlRewrite];
+    set.push('rewrites');
+  }
+  if (!differs.length && !set.length) return { change: null, notes, apply: null };
 
   if (differs.length) {
-    // One yes switches both keys, so a question about only one would hide the other change.
-    const question = differs.length === 2
-      ? `vercel.json builds with ${settings.buildCommand} and serves ${settings.outputDirectory}. Switch both to Afterimage's? (y/N)`
-      : differs[0] === 'buildCommand'
-        ? `vercel.json already builds with ${settings.buildCommand}. Switch it to Afterimage's build? (y/N)`
-        : `vercel.json already serves ${settings.outputDirectory}. Switch it to Afterimage's output? (y/N)`;
+    // One yes switches every key, so a question about only one would hide the other change.
+    const question = differs.includes('framework')
+      ? `vercel.json ${[
+        settings.buildCommand != null && settings.buildCommand !== hostBuild && `builds with ${settings.buildCommand}`,
+        settings.outputDirectory != null && settings.outputDirectory !== hostOutput && `serves ${settings.outputDirectory}`,
+        `uses the ${settings.framework} framework preset, which can serve its own build instead of the history`
+      ].filter(Boolean).join(', ')}. Switch to Afterimage's settings? (y/N)`
+      : differs.length === 2
+        ? `vercel.json builds with ${settings.buildCommand} and serves ${settings.outputDirectory}. Switch both to Afterimage's? (y/N)`
+        : differs[0] === 'buildCommand'
+          ? `vercel.json already builds with ${settings.buildCommand}. Switch it to Afterimage's build? (y/N)`
+          : `vercel.json already serves ${settings.outputDirectory}. Switch it to Afterimage's output? (y/N)`;
     const agreed = isTTY && /^y(es)?$/i.test((await ask(question)).trim());
     if (!agreed) {
-      return { change: null, notes: [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${hostValues}`], apply: null };
+      return { change: null, notes: [`Left vercel.json as it is. To deploy the history with Afterimage, set:\n${hostValues}`, ...notes], apply: null };
     }
+    set.unshift(...differs.filter(key => !set.includes(key)));
   }
+  const text = JSON.stringify({ ...settings, ...hostSettings, ...(rewrites && { rewrites }) }, null, 2);
   return {
-    change: before === null ? 'Created vercel.json' : 'Updated vercel.json (set buildCommand, outputDirectory)',
-    notes: [],
-    apply: writer(file, `${bom}${JSON.stringify({ ...settings, ...wanted }, null, 2)}\n`)
+    change: before === null ? 'Created vercel.json' : `Updated vercel.json (set ${hostKeys.filter(key => set.includes(key)).join(', ')})`,
+    notes,
+    apply: writer(file, `${bom}${text}\n`)
   };
 }
+
+// Whether the project depends on Next.js, however init was told where its prototype is. Netlify and Vercel detect the
+// framework from package.json, not from what Afterimage decided.
+async function usesNext(cwd) {
+  const { body } = await readJsonText(path.join(cwd, 'package.json'));
+  try {
+    const manifest = JSON.parse(body ?? '{}');
+    return 'next' in { ...manifest?.dependencies, ...manifest?.devDependencies };
+  } catch {
+    return false;
+  }
+}
+
+// Netlify's Next.js runtime (OpenNext), which Netlify installs for a Next.js project, treats a static export as its own
+// to deploy: after the build it copies the export's folder (out/) over the publish directory, so /afterimage/ would not
+// deploy. NETLIFY_NEXT_PLUGIN_SKIP makes it step aside. Read in opennextjs-netlify's source (src/index.ts,
+// src/build/content/static.ts), not tried on a real deploy. Netlify answers /about from about.html on its own.
+const skipRuntime = 'NETLIFY_NEXT_PLUGIN_SKIP';
 
 async function planNetlify(cwd) {
   const file = path.join(cwd, 'netlify.toml');
   const before = await readText(file);
+  const next = await usesNext(cwd);
   if (before === null) {
-    return { change: 'Created netlify.toml', notes: [], apply: writer(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n`) };
+    const environment = next ? `\n[build.environment]\n  ${skipRuntime} = "true"\n` : '';
+    return { change: 'Created netlify.toml', notes: [], apply: writer(file, `[build]\n  command = "${hostBuild}"\n  publish = "${hostOutput}"\n${environment}`) };
   }
   // TOML is not parsed or rewritten here: a hand edit is safer than a guessed merge.
   const hasCommand = new RegExp(`^\\s*command\\s*=\\s*["']${hostBuild}["']`, 'm').test(before);
   const hasPublish = new RegExp(`^\\s*publish\\s*=\\s*["']${hostOutput.replace('.', '\\.')}["']`, 'm').test(before);
-  if (hasCommand && hasPublish) return { change: null, notes: [], apply: null };
+  const hasSkip = new RegExp(`^\\s*${skipRuntime}\\s*=\\s*["']?(true|1)["']?\\s*$`, 'm').test(before);
+  const wantsSkip = next && !hasSkip;
+  if (hasCommand && hasPublish && !wantsSkip) return { change: null, notes: [], apply: null };
+  const lines = [];
+  if (!hasCommand || !hasPublish) lines.push(`Under [build], set:\n  command = "${hostBuild}"\n  publish = "${hostOutput}"`);
+  if (wantsSkip) lines.push(`Under [build.environment], set (so Netlify's Next.js runtime leaves the history in place instead of deploying out/):\n  ${skipRuntime} = "true"`);
   return {
     change: null,
-    notes: [`netlify.toml already exists, so Afterimage left it alone. Under [build], set:\n  command = "${hostBuild}"\n  publish = "${hostOutput}"`],
+    notes: [`netlify.toml already exists, so Afterimage left it alone. ${lines.join('\n')}`],
     apply: null
   };
 }

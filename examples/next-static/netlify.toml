@@ -1,3 +1,6 @@
 [build]
   command = "npm run afterimage:build"
   publish = ".afterimage/site"
+
+[build.environment]
+  NETLIFY_NEXT_PLUGIN_SKIP = "true"
