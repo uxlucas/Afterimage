@@ -54,7 +54,7 @@ The agent runs:
 npx afterimage build
 ```
 
-then checks that `afterimage/`, `afterimage.config.json`, `package.json` and `vercel.json` or `netlify.toml` are committed, since the host only sees what is in git, and tells you which aren't. The site is in `.afterimage/site/`, with your app at the root and the history at `/afterimage/`. Vercel and Netlify run the same build from the files init wrote. The agent doesn't commit, push or deploy unless you ask it to.
+then checks that `afterimage/`, `afterimage.config.json`, `package.json` and the lockfile, `.gitattributes`, and `vercel.json` or `netlify.toml` are committed, since the host only sees what is in git, and tells you which aren't. The site is in `.afterimage/site/`, with your app at the root and the history at `/afterimage/`. Vercel and Netlify run the same build from the files init wrote. The agent doesn't commit, push or deploy unless you ask it to.
 
 ## Manual setup
 

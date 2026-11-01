@@ -97,7 +97,7 @@ http://localhost:4321/afterimage/?version=v4&mode=compare&base=v2&hl=1
 
 ## 6. Commit the history
 
-Commit `afterimage/` and `afterimage.config.json` with the project. The history is plain files in your project, so git is what keeps it: a fresh checkout can't get back a version that isn't committed. Don't add `afterimage/` to `.gitignore`, and don't edit, move or delete anything inside `afterimage/versions/`.
+Commit `afterimage/`, `afterimage.config.json`, `package.json` and your lockfile, `.gitattributes`, and `vercel.json` or `netlify.toml` with the project. The history is plain files in your project, so git is what keeps it: a fresh checkout can't get back a version that isn't committed. `.gitattributes` keeps git from changing a saved version's line endings, so a version cloned onto another machine still matches its fingerprint. Don't add `afterimage/` to `.gitignore`, and don't edit, move or delete anything inside `afterimage/versions/`.
 
 ## 7. Deploy
 
@@ -105,6 +105,6 @@ Commit `afterimage/` and `afterimage.config.json` with the project. The history 
 npx afterimage build
 ```
 
-This writes `.afterimage/site/` with your app at the root and the history at `/afterimage/`. On Vercel and Netlify, commit `vercel.json` or `netlify.toml` too and push: the host runs the same build. See [deploying.md](deploying.md).
+This writes `.afterimage/site/` with your app at the root and the history at `/afterimage/`. On Vercel and Netlify, push what you committed: the host runs the same build. See [deploying.md](deploying.md).
 
 Every saved version deploys with the site, so save only what you'd show. [limits.md](limits.md) lists what else to know before you share the link.

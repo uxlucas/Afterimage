@@ -141,3 +141,33 @@ test('each CLI message the setup prompt quotes is still printed by the CLI', asy
     assert.ok(source.includes(message), `src/cli still prints ${message}`);
   }
 });
+
+// Every list of what to commit names what docs/deploying.md's "What to commit" does. A missing .gitattributes lets git
+// rewrite a saved version's line endings, and the host only deploys what is in git.
+const committed = {
+  'afterimage/': /`afterimage\/`|(?<= )afterimage(?= )/,
+  'afterimage.config.json': /afterimage\.config\.json/,
+  'package.json': /package\.json/,
+  lockfile: /lockfile|package-lock\.json/,
+  '.gitattributes': /\.gitattributes/,
+  'vercel.json': /vercel\.json/,
+  'netlify.toml': /netlify\.toml/
+};
+const named = text => Object.keys(committed).filter(item => committed[item].test(text));
+
+test('every list of what to commit names the same files as deploying.md', async () => {
+  const section = (text, heading) => text.split(heading)[1].split(/\n## /)[0];
+  const deploying = section(await read('docs/deploying.md'), '## What to commit\n');
+  assert.deepEqual(named(deploying), Object.keys(committed));
+  const lists = {
+    'docs/getting-started.md': section(await read('docs/getting-started.md'), '## 6. Commit the history\n'),
+    'README.md': (await read('README.md')).match(/^Commit `afterimage\/`.*$/m)?.[0],
+    [skillFile]: (await read(skillFile)).match(/`git status --short -- [^`]*`/)?.[0],
+    [ruleFile]: (await read(ruleFile)).match(/`git status --short -- [^`]*`/)?.[0],
+    [docsFile]: (await read(docsFile)).match(/^then checks that .*? are committed/m)?.[0]
+  };
+  for (const [name, list] of Object.entries(lists)) {
+    assert.ok(list, `${name} has its list of what to commit`);
+    assert.deepEqual(named(list), Object.keys(committed), name);
+  }
+});

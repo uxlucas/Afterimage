@@ -46,7 +46,7 @@ npx afterimage dev
 
 It prints the viewer's address, `http://localhost:4321/afterimage/` unless that port is busy. Your app keeps running on its own dev server. In the viewer, `[` and `]` step through versions, `H` highlights what changed, `C` compares two versions, and `?` lists every shortcut.
 
-Commit `afterimage/` with the rest of the project. It holds every saved version, and a fresh checkout can't get back a version that isn't in git.
+Commit `afterimage/` with the rest of the project, along with `afterimage.config.json`, `package.json` and your lockfile, `.gitattributes`, and `vercel.json` or `netlify.toml`. `afterimage/` holds every saved version, and a fresh checkout can't get back a version that isn't in git. `.gitattributes` stops git from changing a saved version's line endings, which would break its fingerprint on another machine.
 
 ## Deploying
 
