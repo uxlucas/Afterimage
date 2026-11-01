@@ -112,3 +112,16 @@ test('the docs carry nothing of the project Afterimage grew out of', async () =>
     }
   }
 });
+
+// The launch video recorder is its own private package under launch/, outside the docs list above, so its files are read too.
+test('the launch video recorder carries nothing of the project Afterimage grew out of', async () => {
+  const folder = path.join(root, 'launch', 'video');
+  const names = (await fs.readdir(folder)).filter(name => /\.(md|mjs|js|html|json)$/.test(name));
+  assert.ok(names.includes('record.mjs') && names.includes('script.md'));
+  for (const name of names) {
+    const text = await read(`launch/video/${name}`);
+    for (const leftover of [/time-machine/i, /time machine/i, /tm-id/, /playground/i, /\/draft/]) {
+      assert.doesNotMatch(text, leftover, name);
+    }
+  }
+});

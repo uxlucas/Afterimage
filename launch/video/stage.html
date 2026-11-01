@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- The film's frame: a caption band on top, the real viewer below it in its own window. -->
+<meta charset="utf-8">
+<title>Afterimage film</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
+  #viewer {
+    position: absolute; left: 16px; right: 16px; top: 140px; bottom: 16px;
+    width: calc(100% - 32px); height: calc(100% - 156px);
+    border: 0; border-radius: 16px; background: #fff;
+    box-shadow: 0 0 0 1px #e6e6e6, 0 16px 48px rgb(0 0 0 / 0.06);
+  }
+</style>
+<iframe id="viewer" src="/afterimage/" title="Viewer"></iframe>
+<script src="film.js"></script>
