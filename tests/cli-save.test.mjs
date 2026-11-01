@@ -214,7 +214,11 @@ test('a plain folder at the project root saves without its README, LICENSE and a
   const result = await run(root, ['save', 'First draft']);
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(await fs.readdir(path.join(root, 'afterimage/versions/v1')), ['index.html']);
-  const built = await run(root, ['build']);
+  // A stand-in viewer, so the test runs in a checkout where the real one is not built.
+  const viewerDir = path.join(await temp(t), 'viewer');
+  await fs.mkdir(viewerDir);
+  await fs.writeFile(path.join(viewerDir, 'index.html'), '<title>viewer</title>');
+  const built = await run(root, ['build'], { viewerDir });
   assert.equal(built.code, 0, built.stderr);
   for (const name of ['README.md', 'LICENSE', 'CLAUDE.md', 'agents.md']) {
     assert.ok(!await fs.stat(path.join(root, '.afterimage/site', name)).catch(() => null), `${name} is not deployed`);
