@@ -2,9 +2,11 @@
 
 A procedure for maintainers. It shows on a real Vercel preview and a real Netlify deploy what the test suite only checks against a local static server: that the host config `init` writes (see [deploying.md](deploying.md)) deploys the history at `/afterimage/` and leaves the live app at the root as its own build makes it.
 
-**None of this has been run on a real deployment yet.** The host settings rest on the hosts' documentation and on reading their build tools' source. Until this procedure has been run and its results written down, treat them as unverified.
+**It has been run on Vercel, not yet on Netlify.** The [results](#results) are at the end of this page. The Netlify settings still rest on Netlify's documentation and on reading its build tools' source, so treat them as unverified until this procedure has been run there.
 
 Run it for `examples/next-static` first, since it exercises every setting, then for `examples/astro`, `examples/sveltekit-static` and `examples/vite-react`. Nothing here deploys to production. It needs accounts on GitHub, Vercel and Netlify.
+
+On Vercel, the copy can also be deployed from its folder with no Git remote: `vercel link --yes --project <a throwaway name>`, then `vercel deploy`. A new project's first deploy goes to that project's own production address, which is fine for a throwaway project; later deploys are previews. Instead of turning off Vercel Authentication, run each `curl` line below as `vercel curl <path> --deployment <url> -- -sI`, from the linked folder: it gets past the protection for your own deployments. In Git Bash, set `MSYS_NO_PATHCONV=1` first, or it turns `/` into a Windows path.
 
 The commands are for bash: Git Bash on Windows, or Linux. On macOS, use `shasum -a 256` for `sha256sum` and `sed -i ''` for `sed -i`.
 
@@ -151,7 +153,7 @@ For Next.js, Astro and SvelteKit, don't conclude anything from a mismatch at the
 
 These confirm the settings are needed.
 
-- Branch `no-null`, on Vercel: `"framework": null` is gone from `vercel.json`. Expect `/afterimage/` to be a 404, because the Next.js builder served `out/`.
+- Branch `no-null`, on Vercel: `"framework": null` is gone from `vercel.json`. Expect the deploy to fail: the Next.js builder looks for its own files (`routes-manifest.json`) in `.afterimage/site/` and doesn't find them. (This page first predicted a 404 on `/afterimage/`. The 2026-11-01 run showed the failed deploy instead.)
 - Branch `no-skip`, on Netlify: the `[build.environment]` block is gone from `netlify.toml`. Expect `/afterimage/` to be a 404.
 
 If either still answers 200, that setting isn't needed on that host, and the reading of its builder was wrong.
@@ -188,4 +190,9 @@ Add a row for each run, with the details above kept next to it (a pull request, 
 
 | Date | Afterimage version | Example | Host | Vercel preset | Checks as expected | Findings |
 | --- | --- | --- | --- | --- | --- | --- |
-| Not run yet | | | | | | |
+| 2026-11-01 | 0.1.0 (from npm) | next-static | Vercel | Next.js | A, B, C, D, G, H | H: the `no-null` deploy fails instead of answering 404, see check H. F: `_next/static` chunks are served with `public, max-age=0, must-revalidate`, as expected with `"framework": null`; no baseline deploy was made. |
+| 2026-11-01 | 0.1.0 (from npm) | astro | Vercel | Astro | A, B, C, D, G | `/about` and `/afterimage/versions/v2/about` answer 200 with no slash. In the viewer, v2's "About this site" link opens inside the version. The example has no hashed `_astro/` files, so F had nothing to compare. `__afterimageFile` not written down. I not run. |
+| 2026-11-01 | 0.1.0 (from npm) | sveltekit-static | Vercel | SvelteKit | A, B, C, E, G | The log shows `Wrote site to "build"`, and `/`, `/about` and `/afterimage/` are 200. |
+| 2026-11-01 | 0.1.0 (from npm) | vite-react | Vercel | Vite | A, B, C, G | The client route `/about` answers 404 at the root. A baseline deploy without Afterimage's `vercel.json` answers 404 too: Vercel serves no single-page-app fallback for Vite by default, so this isn't Afterimage's doing. |
+
+In every Vercel run, both saved versions were served byte for byte as committed, `/afterimage` redirected with a 308 to `/afterimage/`, and a missing path inside a version was a 404. For next-static and astro, the viewer showed both versions and stepped between them in a browser signed in to Vercel. Netlify: not run yet.
