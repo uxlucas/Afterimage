@@ -51,8 +51,8 @@ export function readSnapshot(directory, { exclude = [], strict = false } = {}) {
 
 // What the live root gets: the app's own output as it is, source maps, dotfiles and host files (_redirects,
 // .well-known/) included, because the app's own build ships them. A repository or installed packages are never site
-// files. A plain folder (the prototype is the project root) also holds the project's hidden files (.env, .gitignore,
-// .vscode/), which must never go public, so there only .well-known/ is kept.
+// files. A plain folder (the project root, or any folder no build writes) also holds hidden files of its own (.env,
+// .gitignore, .vscode/), which must never go public, so there only .well-known/ is kept.
 export function readApp(directory, { exclude = [], plain = false } = {}) {
   return readFiles(directory, exclude, (name, entry) => {
     if (entry.isDirectory() && (entry.name === '.git' || entry.name === 'node_modules')) return true;

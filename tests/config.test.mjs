@@ -76,6 +76,13 @@ test('a build folder source uses only config.exclude', () => {
   assert.deepEqual(projectExcludes({ ...config, exclude: [] }), []);
 });
 
+test('a history or out folder that a hand-written config puts inside the source is left out of it', () => {
+  const config = { source: 'site', build: null, history: 'site/.hist', out: './site/out/', exclude: ['cache'], type: 'plain' };
+  assert.deepEqual(projectExcludes(config), ['.hist', 'out', 'cache']);
+  // A name that only starts like the source is not inside it.
+  assert.deepEqual(projectExcludes({ ...config, history: 'site-history', out: '.afterimage/site' }), ['cache']);
+});
+
 test('source, history and out are normalized when read', async t => {
   const root = await temp(t);
   await fs.writeFile(configPath(root), JSON.stringify({ source: 'src\\..', history: '.\\afterimage\\', out: 'x/../site/' }));

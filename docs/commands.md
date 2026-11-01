@@ -105,8 +105,8 @@ Builds the prototype and writes the deployable site with the history at `/afteri
 
 - It checks every saved version against its fingerprint, then runs the build command when the config has one.
 - It writes `.afterimage/site/`: the prototype at the root, and under `afterimage/` the viewer, `versions.json`, every saved version and the frame runtime (`sw.js` and `frame.js`).
-- The root is your app's output exactly as its own build makes it, source maps, hidden files such as `.well-known/` and host files such as `_redirects` included. Only `exclude`, a `.git` or `node_modules` folder and operating-system clutter are left out.
-- When the prototype is the project root (a plain folder), the project's own files stay out as they do for a save, and so do its hidden files and folders (`.env`, `.gitignore`, `.vscode/`), except `.well-known/`.
+- The root is your app's output exactly as its own build makes it, source maps, hidden files such as `.well-known/` and host files such as `_redirects` included. Only `exclude`, a `.git` or `node_modules` folder and operating-system clutter are left out. A symbolic link in the output stops the build: replace it with the file it points to, or add it to `exclude`.
+- When the prototype is the project root (a plain folder), the project's own files stay out as they do for a save. When it is the project root or any folder with no build command, its hidden files and folders (`.env`, `.gitignore`, `.vscode/`) stay out too, except `.well-known/`.
 - It stops if the app has its own top-level `afterimage` file or folder, since the history is served there.
 - The previous site stays in place until the new one is complete, so a failed build leaves it as it was.
 - With no saved versions it stops with `Save a first version with: afterimage save "Name"`.

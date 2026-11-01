@@ -102,7 +102,8 @@ export async function assembleSite({ projectDir, config, viewerDir = packagedVie
     const excluded = await sourceExcludes(projectDir, config);
     await checkCollision(sourceDir, excluded);
     // The app's output as its own build made it, not a save's selection: nothing Afterimage does may change the live root.
-    app = await readApp(sourceDir, { exclude: excluded, plain: sourceDir === path.resolve(projectDir) });
+    // Files no build wrote are the person's own folder, which can hold .env and editor settings like the project root.
+    app = await readApp(sourceDir, { exclude: excluded, plain: !config.build || sourceDir === path.resolve(projectDir) });
     // Case-insensitive: on Windows and macOS Afterimage/ is the same folder.
     if ([...app.keys()].some(name => name.split('/')[0].toLowerCase() === servedFolder)) throw collision();
   }

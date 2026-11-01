@@ -265,6 +265,22 @@ test('a plain folder at the project root keeps its hidden files off the site, ex
   assert.equal(await fs.readFile(path.join(site, '.well-known/x'), 'utf8'), 'proof');
 });
 
+test('a hand-made folder with no build keeps its hidden files and a history inside it off the site', async t => {
+  const dirs = await fixtures(t);
+  const root = await project(t, configWith(null, { source: 'site', history: 'site/history' }));
+  const files = { 'site/index.html': '<h1>Hand made</h1>', 'site/.env': 'SECRET=1', 'site/.well-known/x': 'proof' };
+  for (const [name, text] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.writeFile(path.join(root, name), text);
+  }
+  assert.equal((await run(root, ['save', 'Only version'])).code, 0);
+  const result = await run(root, ['build'], dirs);
+  assert.equal(result.code, 0, result.stderr);
+  const site = path.join(root, '.afterimage/site');
+  assert.deepEqual((await listing(site)).filter(name => !served(name)), ['.well-known', '.well-known/x', 'index.html']);
+  assert.deepEqual(await listing(path.join(root, 'site/history/versions/v1')), ['index.html']);
+});
+
 test('assembleSite without the app writes only the afterimage folder and ignores the app', async t => {
   const dirs = await fixtures(t);
   // The build would fail and the app has its own afterimage folder: neither matters without the app.

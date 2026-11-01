@@ -66,10 +66,15 @@ export async function writeConfig(projectDir, config) {
 }
 
 // What the store leaves out when the prototype is the project root. A build folder has none of the project-level
-// names inside it, so only the user's own excludes apply there. rootFiles are the files (not folders) at the top of the
-// project as they are spelled on disk, so the docs among them are left out by their own spelling.
+// names inside it, so only the user's own excludes apply there, plus the history and out folders if a hand-written
+// config puts them inside it. rootFiles are the files (not folders) at the top of the project as they are spelled on
+// disk, so the docs among them are left out by their own spelling.
 export function projectExcludes(config, rootFiles = []) {
-  if (cleanPath(config.source) !== '.' && cleanPath(config.source) !== '') return [...config.exclude];
+  const source = cleanPath(config.source);
+  if (source !== '.' && source !== '') {
+    const inside = [config.history, config.out].map(cleanPath).filter(dir => dir.startsWith(`${source}/`));
+    return [...new Set([...inside.map(dir => dir.slice(source.length + 1)), ...config.exclude])];
+  }
   const docs = rootFiles.filter(name => projectDoc.test(name));
   return [...new Set([...projectNames, ...docs, config.history, config.out, ...config.exclude].map(cleanPath))];
 }
