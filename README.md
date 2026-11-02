@@ -11,11 +11,10 @@ Afterimage keeps every version of your prototype you save and serves them all fr
 Afterimage needs Node 22 or later. From your prototype's project root:
 
 ```bash
-npm install -D afterimage-cli
-npx afterimage init
+npx afterimage-cli init
 ```
 
-A plain HTML folder with no `package.json` needs `npm init -y` first.
+npx asks once to fetch the package. `init` installs it in the project as a dev dependency, with the package manager your lockfile names, and creates `package.json` first for a plain HTML folder that has none.
 
 `init` works out what your prototype is: a plain HTML folder, a Vite app, a Next.js static export, an Astro site, or SvelteKit with `@sveltejs/adapter-static`. It puts the Afterimage pill on your prototype and makes `npm run dev` start Afterimage beside your app. It also writes `afterimage.config.json`, lines in `.gitattributes` and `.gitignore`, and host config for Vercel and Netlify, then lists every file it changed. For Next.js, Astro and SvelteKit it prints the one import that adds the pill. When it can't tell which folder holds the prototype, it asks. You can also tell it:
 

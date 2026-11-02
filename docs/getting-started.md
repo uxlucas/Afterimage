@@ -2,25 +2,15 @@
 
 This page takes a prototype from no history to a deployed one. Every command runs from the project root. To have a coding agent do the setup for you, paste the setup prompt from [agents.md](agents.md) instead.
 
-## 1. Install
+## 1. Set up the project
 
-Afterimage needs Node 22 or later. A plain HTML folder with no `package.json` needs one first:
-
-```bash
-npm init -y
-```
-
-Then install Afterimage as a dev dependency:
+Afterimage needs Node 22 or later. One command installs it and sets the project up:
 
 ```bash
-npm install -D afterimage-cli
+npx afterimage-cli init
 ```
 
-## 2. Set up the project
-
-```bash
-npx afterimage init
-```
+npx asks once to fetch the package. `init` then installs it in the project as a dev dependency, with the package manager your lockfile names (npm when there is none), so `npx afterimage` and `npm run dev` run it from then on. A plain HTML folder with no `package.json` gets one.
 
 `init` looks at the project to find the prototype:
 
@@ -53,7 +43,7 @@ Then it writes these files and lists each one it created or changed:
 
 Nothing is written until every step has worked, so a mistake leaves the project as it was. Running init again is safe: it only adds what is missing, and never overwrites a setting of yours without asking first. Read the notes it prints after the list of files; they are things only you can decide.
 
-## 3. Save a version
+## 2. Save a version
 
 ```bash
 npx afterimage save "First version"
@@ -67,7 +57,7 @@ npx afterimage save "Remember me" --note "Keeps people signed in for 30 days." -
 
 If nothing changed since the last version, nothing is saved and it says so. A saved version is never edited afterwards: each one is fingerprinted, and every later save, dev and build checks the fingerprints first.
 
-## 4. Run the prototype with the pill
+## 3. Run the prototype with the pill
 
 ```bash
 npm run dev
@@ -77,7 +67,7 @@ Your app starts as it always does, with Afterimage beside it, and the pill sits 
 
 It keeps running until you stop it with Ctrl-C. It also prints `Afterimage is running at http://localhost:4321/afterimage/`, where the history opens on its own page. The port moves to the next free one when 4321 is busy. If your `dev` script doesn't start with `afterimage dev`, run your own dev command through it instead: `npx afterimage dev -- next dev`.
 
-## 5. Use the viewer
+## 4. Use the viewer
 
 The viewer opens on the latest version, with a pill at the bottom of the page.
 
@@ -96,11 +86,11 @@ http://localhost:4321/afterimage/?version=v4&mode=compare&base=v2&hl=1
 
 [matching.md](matching.md) explains how the viewer decides what changed.
 
-## 6. Commit the history
+## 5. Commit the history
 
 Commit `afterimage/`, `afterimage.config.json`, `package.json` and your lockfile, `.gitattributes`, and `vercel.json` or `netlify.toml` with the project. The history is plain files in your project, so git is what keeps it: a fresh checkout can't get back a version that isn't committed. `.gitattributes` keeps git from changing a saved version's line endings, so a version cloned onto another machine still matches its fingerprint. Don't add `afterimage/` to `.gitignore`, and don't edit, move or delete anything inside `afterimage/versions/`.
 
-## 7. Deploy
+## 6. Deploy
 
 ```bash
 npx afterimage build

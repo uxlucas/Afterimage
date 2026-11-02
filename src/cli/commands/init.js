@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -349,6 +350,52 @@ async function planAgent(cwd, name, { isTTY, ask }) {
   };
 }
 
+// "npx afterimage-cli init" runs from npx's cache, so the project gets the package too, at the version that is
+// running: npm run dev, save and build all run it from node_modules. It goes in with the package manager the project's
+// lockfile names, after every other step, since the install writes package.json too.
+const { version } = JSON.parse(await fs.readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
+const installers = [['pnpm-lock.yaml', 'pnpm add -D'], ['yarn.lock', 'yarn add -D'], ['bun.lock', 'bun add -d'], ['bun.lockb', 'bun add -d']];
+
+// The package manager's own output only shows when the install fails, as its last lines.
+function installInTerminal(command, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { shell: true, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const output = [];
+    child.stdout.on('data', chunk => output.push(chunk));
+    child.stderr.on('data', chunk => output.push(chunk));
+    child.on('error', error => reject(new Error(`The install could not start: ${error.message}.`)));
+    child.on('close', code => {
+      if (code === 0) return resolve();
+      const said = Buffer.concat(output).toString().trim().split(/\r?\n/).slice(-12).join('\n');
+      reject(new Error(`${said ? `${said}\n` : ''}The install failed (exit code ${code}).`));
+    });
+  });
+}
+
+async function planInstall(cwd, { manifest }, { stdout, install }) {
+  if ('afterimage-cli' in { ...manifest.dependencies, ...manifest.devDependencies }) return { change: null, notes: [], apply: null };
+  let installer = 'npm install -D';
+  for (const [lockfile, command] of installers) {
+    if (await readText(path.join(cwd, lockfile)) !== null) {
+      installer = command;
+      break;
+    }
+  }
+  const command = `${installer} afterimage-cli@${version}`;
+  return {
+    change: `Installed afterimage-cli ${version} as a dev dependency`,
+    notes: [],
+    apply: async () => {
+      stdout.write(`Installing afterimage-cli ${version}...\n`);
+      try {
+        await install(command, cwd);
+      } catch (error) {
+        throw new Error(`${error.message}\nEverything else is set up. Install Afterimage yourself to finish: ${command}`);
+      }
+    }
+  };
+}
+
 export async function run(args, ctx) {
   const { cwd, stdout, stderr } = ctx;
 
@@ -381,7 +428,7 @@ export async function run(args, ctx) {
 
   // Plan first, write after. package.json is read before the config step so a bad one stops init before any question,
   // and detection (which reads package.json) still sees the project as it was.
-  let plans;
+  let plans, agentPlan;
   try {
     const packageFile = await readPackage(cwd);
     const configPlan = await planConfig(cwd, flags, prompt);
@@ -394,7 +441,8 @@ export async function run(args, ctx) {
       await planLines(cwd, '.gitignore', ['.afterimage/', `${configPlan.config.history}/.afterimage-*`, 'node_modules/'], hasIgnore),
       await planVercel(cwd, prompt),
       await planNetlify(cwd),
-      await planAgent(cwd, agent, prompt)
+      agentPlan = await planAgent(cwd, agent, prompt),
+      await planInstall(cwd, packageFile, { stdout, install: ctx.install ?? installInTerminal })
     ];
   } catch (error) {
     // Ctrl-C at a prompt. Nothing has been written yet, so stopping here is clean. 130 is the shell's code for SIGINT.
@@ -411,7 +459,7 @@ export async function run(args, ctx) {
   else stdout.write(notes.length ? 'No files changed. Still left for you:\n' : 'Everything is already set up. Nothing changed.\n');
   if (notes.length) stdout.write(`${changes.length ? '\n' : ''}${notes.join('\n\n')}\n`);
   // With --agent the copy is in place, and a fresh one needs loading; without it, say how to add it.
-  const agentLine = agent ? plans.at(-1).change && agents[agent].loads : skillHint;
+  const agentLine = agent ? agentPlan.change && agents[agent].loads : skillHint;
   const dev = (await readPackage(cwd)).manifest.scripts?.dev;
   stdout.write(`\n${agentLine ? `${agentLine}\n` : ''}${nextStep(typeof dev === 'string' && dev.trim().startsWith(devWrap))}\n`);
   return 0;

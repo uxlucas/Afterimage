@@ -27,7 +27,7 @@ Sets up Afterimage in the project: config, scripts, the pill, git rules and host
 | `--agent cursor` | Also copies the same instructions as a rule to `.cursor/rules/afterimage.mdc`, for Cursor. |
 | `--no-input` | Asks nothing, even in a terminal. Where init would have asked, it stops with a message or prints what is left for you to do. |
 
-Without `--source`, init detects the prototype; [getting-started.md](getting-started.md#2-set-up-the-project) has the table. When it can't, it asks in a terminal, and otherwise stops with `Say where the prototype is: afterimage init --source <folder>`. A project with no static build to save stops, even in a terminal, with a message that says `no static build` and what to change: Next.js without `output: 'export'`, Astro with an adapter (or `output: 'server'`) but without `output: 'static'`, and SvelteKit without `@sveltejs/adapter-static`. With `--source`, init takes the folder you name instead.
+Without `--source`, init detects the prototype; [getting-started.md](getting-started.md#1-set-up-the-project) has the table. When it can't, it asks in a terminal, and otherwise stops with `Say where the prototype is: afterimage init --source <folder>`. A project with no static build to save stops, even in a terminal, with a message that says `no static build` and what to change: Next.js without `output: 'export'`, Astro with an adapter (or `output: 'server'`) but without `output: 'static'`, and SvelteKit without `@sveltejs/adapter-static`. With `--source`, init takes the folder you name instead.
 
 It writes:
 

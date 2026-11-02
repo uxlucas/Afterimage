@@ -17,11 +17,25 @@ async function temp(t) {
 }
 
 // answers lists what the terminal would reply, in order; without it the run has no TTY. questions collects what was asked.
-async function run(cwd, args = [], { answers } = {}) {
+// installs collects the installs init asks for, which never run for real here. By default the stand-in lists the
+// package in devDependencies, as the package manager would; install replaces that.
+const listPackage = async (command, at) => {
+  const file = path.join(at, 'package.json');
+  const manifest = JSON.parse(await fs.readFile(file, 'utf8'));
+  manifest.devDependencies = { ...manifest.devDependencies, 'afterimage-cli': `^${command.split('@').pop()}` };
+  await fs.writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
+};
+// For tests of how init itself writes package.json: the install leaves the file as init wrote it.
+const leavePackage = async () => {};
+async function run(cwd, args = [], { answers, install = listPackage } = {}) {
   const out = [];
   const err = [];
   const questions = [];
-  const ctx = { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, isTTY: Boolean(answers) };
+  const installs = [];
+  const ctx = {
+    cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, isTTY: Boolean(answers),
+    install: async (command, at) => { installs.push({ command, cwd: at }); await install(command, at); }
+  };
   if (answers) {
     ctx.ask = async question => {
       questions.push(question);
@@ -29,7 +43,7 @@ async function run(cwd, args = [], { answers } = {}) {
     };
   }
   const code = await main(['init', ...args], ctx);
-  return { code, stdout: out.join(''), stderr: err.join(''), questions };
+  return { code, stdout: out.join(''), stderr: err.join(''), questions, installs };
 }
 
 const write = (root, name, text) => fs.writeFile(path.join(root, name), text);
@@ -61,7 +75,7 @@ const lines = text => text.split(/\r?\n/);
 test('init in a plain folder creates package.json and ignores node_modules', async t => {
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
-  const result = await run(root);
+  const result = await run(root, [], { install: leavePackage });
   assert.equal(result.code, 0, result.stderr);
 
   const config = await readConfig(root);
@@ -80,6 +94,54 @@ test('init in a plain folder creates package.json and ignores node_modules', asy
   assert.match(result.stdout, /^Created netlify\.toml$/m);
   // One command from here: dev starts the prototype with the pill on it, and the pill saves.
   assert.ok(result.stdout.trimEnd().endsWith('Next: npm run dev, then use the Afterimage pill on your prototype to save versions and see them all.'));
+});
+
+const { version } = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+test('init installs afterimage-cli at its own version when the project lacks it, once package.json is written', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  let scripts = null;
+  const result = await run(root, [], { install: async (command, at) => { scripts = (await readJson(root, 'package.json')).scripts; await listPackage(command, at); } });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.installs, [{ command: `npm install -D afterimage-cli@${version}`, cwd: root }]);
+  assert.equal(scripts?.dev, 'afterimage dev', 'package.json had its scripts before the install ran');
+  assert.ok(lines(result.stdout).includes(`Installed afterimage-cli ${version} as a dev dependency`), result.stdout);
+});
+
+test('init installs nothing when package.json already lists afterimage-cli', async t => {
+  for (const key of ['devDependencies', 'dependencies']) {
+    const root = await temp(t);
+    await write(root, 'index.html', '<h1>Hi</h1>');
+    await write(root, 'package.json', JSON.stringify({ private: true, [key]: { 'afterimage-cli': '^0.1.0' } }));
+    const result = await run(root);
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.installs, [], key);
+    assert.doesNotMatch(result.stdout, /Installed afterimage-cli/);
+  }
+});
+
+test('init installs with the package manager the project already uses', async t => {
+  const managers = { 'pnpm-lock.yaml': 'pnpm add -D', 'yarn.lock': 'yarn add -D', 'bun.lock': 'bun add -d', 'bun.lockb': 'bun add -d', 'package-lock.json': 'npm install -D' };
+  for (const [lockfile, command] of Object.entries(managers)) {
+    const root = await temp(t);
+    await write(root, 'index.html', '<h1>Hi</h1>');
+    await write(root, lockfile, '');
+    const result = await run(root);
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.installs.map(install => install.command), [`${command} afterimage-cli@${version}`], lockfile);
+  }
+});
+
+test('a failed install keeps the rest of the setup and says how to finish it', async t => {
+  const root = await temp(t);
+  await write(root, 'index.html', '<h1>Hi</h1>');
+  const result = await run(root, [], { install: async () => { throw new Error('npm exited with code 1.'); } });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /npm exited with code 1\./);
+  assert.ok(result.stderr.includes(`npm install -D afterimage-cli@${version}`), result.stderr);
+  assert.ok(await exists(root, 'afterimage.config.json'));
+  assert.equal((await readJson(root, 'package.json')).scripts.dev, 'afterimage dev');
 });
 
 test('init reads the project before it creates package.json', async t => {
@@ -108,7 +170,7 @@ test('package.json keeps its scripts and only gets the ones it lacks', async t =
   const root = await temp(t);
   await write(root, 'index.html', '<h1>Hi</h1>');
   await write(root, 'package.json', '{\n\t"devDependencies": { "vite": "1.0.0" },\n\t"scripts": {\n\t\t"afterimage:save": "my own save"\n\t}\n}\n');
-  const result = await run(root);
+  const result = await run(root, [], { install: leavePackage });
   assert.match(result.stdout, /^Updated package\.json \(added 2 scripts\)$/m);
   const text = await read(root, 'package.json');
   assert.match(text, /^\t"scripts"/m, 'keeps the tab indent');
@@ -796,14 +858,14 @@ test('an answered folder that does not exist yet says a build can create it', as
 test('a byte order mark in package.json is read and kept', async t => {
   const root = await temp(t);
   await write(root, 'package.json', '﻿' + JSON.stringify({ devDependencies: { vite: '1.0.0' } }, null, 2) + '\n');
-  const result = await run(root);
+  const result = await run(root, [], { install: leavePackage });
   assert.equal(result.code, 0, result.stderr);
   assert.equal((await readConfig(root)).type, 'vite');
   const text = await read(root, 'package.json');
   assert.ok(text.startsWith('﻿{'));
   assert.equal(JSON.parse(text.slice(1)).scripts['afterimage:build'], 'afterimage build');
   const before = await snapshot(root);
-  await run(root);
+  await run(root, [], { install: leavePackage });
   assert.deepEqual(await snapshot(root), before);
 });
 
@@ -821,20 +883,20 @@ test('a byte order mark in vercel.json is read and kept', async t => {
 test('a CRLF package.json keeps its line endings and a second run changes nothing', async t => {
   const root = await temp(t);
   await write(root, 'package.json', '{\r\n  "devDependencies": { "vite": "1.0.0" }\r\n}\r\n');
-  assert.equal((await run(root)).code, 0);
+  assert.equal((await run(root, [], { install: leavePackage })).code, 0);
   const text = await read(root, 'package.json');
   assert.ok(!/(^|[^\r])\n/.test(text), 'every newline is CRLF');
   assert.ok(text.endsWith('}\r\n'));
   assert.equal(JSON.parse(text).scripts['afterimage:save'], 'afterimage save');
   const before = await snapshot(root);
-  await run(root);
+  await run(root, [], { install: leavePackage });
   assert.deepEqual(await snapshot(root), before);
 });
 
 test('a 4-space package.json with no final newline keeps both', async t => {
   const root = await temp(t);
   await write(root, 'package.json', '{\n    "devDependencies": { "vite": "1.0.0" }\n}');
-  assert.equal((await run(root)).code, 0);
+  assert.equal((await run(root, [], { install: leavePackage })).code, 0);
   const text = await read(root, 'package.json');
   assert.match(text, /^ {4}"scripts": \{$/m);
   assert.match(text, /^ {8}"afterimage:save"/m);

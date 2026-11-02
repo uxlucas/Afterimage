@@ -45,8 +45,9 @@ test('the docs only name commands and flags the CLI has, and each flag under its
     for (const { heading, code } of sectionsOf(await read(name))) {
       const section = Object.hasOwn(commands, heading) ? heading : null;
       for (const piece of code) {
-        // "afterimage save ..." as typed, with or without npx. Not afterimage/, afterimage-cli or afterimage:build.
-        for (const [, command, rest] of piece.matchAll(/(?<![\w/.:-])afterimage (\w+)([^`|]*)/g)) {
+        // "afterimage save ..." as typed, with or without npx, and "afterimage-cli init" as npx fetches it. Not
+        // afterimage/, afterimage-cli/overlay or afterimage:build.
+        for (const [, command, rest] of piece.matchAll(/(?<![\w/.:-])afterimage(?:-cli)? (\w+)([^`|]*)/g)) {
           if (command === 'help') {
             const [topic] = rest.trim().split(/\s+/);
             assert.ok(!topic || topic === '<command>' || Object.hasOwn(commands, topic), `${name}: afterimage help ${topic}`);

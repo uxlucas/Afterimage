@@ -78,11 +78,9 @@ test('the setup prompt is one paragraph with every command written out', async (
   const prompt = docs.split('## Setup prompt')[1].match(/```text\n([\s\S]*?)\n```/)[1];
   assert.ok(!prompt.includes('\n'), 'one paragraph');
   for (const command of [
-    '`npm init -y`',
-    '`npm install --save-dev afterimage-cli`',
-    '`npx afterimage init --agent claude --no-input`',
-    '`npx afterimage init --agent cursor --no-input`',
-    '`npx afterimage init --no-input`',
+    '`npx --yes afterimage-cli init --agent claude --no-input`',
+    '`npx --yes afterimage-cli init --agent cursor --no-input`',
+    '`npx --yes afterimage-cli init --no-input`',
     '`--source <folder>`',
     '`--build "<command>"`',
     '`npx afterimage save "First version"`',
@@ -114,15 +112,15 @@ test('the agent files only name commands and flags the CLI has', async () => {
   const allFlags = new Set(Object.keys(commands).flatMap(flagsOf));
   for (const name of agentFiles) {
     for (const code of await codeIn(name)) {
-      for (const [, command, rest] of code.matchAll(/npx afterimage (\w+)([^`]*)/g)) {
+      for (const [, command, rest] of code.matchAll(/npx (?:--yes )?afterimage(?:-cli)? (\w+)([^`]*)/g)) {
         assert.ok(Object.hasOwn(commands, command), `${name}: npx afterimage ${command}`);
         for (const [flag] of rest.matchAll(/--[a-z][\w-]*/g)) {
           assert.ok(flagsOf(command).includes(flag), `${name}: ${command} has no ${flag} (in "${code}")`);
         }
       }
-      // A flag named on its own still has to belong to a command.
+      // A flag named on its own still has to belong to a command. npx's own --yes, before the package, is npx's.
       if (otherTool.test(code)) continue;
-      for (const [flag] of code.matchAll(/(?<![\w-])--[a-z][\w-]*/g)) {
+      for (const [flag] of code.matchAll(/(?<![\w-])(?<!npx )--[a-z][\w-]*/g)) {
         assert.ok(allFlags.has(flag), `${name}: no command has ${flag} (in "${code}")`);
       }
     }
@@ -161,7 +159,7 @@ test('every list of what to commit names the same files as deploying.md', async 
   const deploying = section(await read('docs/deploying.md'), '## What to commit\n');
   assert.deepEqual(named(deploying), Object.keys(committed));
   const lists = {
-    'docs/getting-started.md': section(await read('docs/getting-started.md'), '## 6. Commit the history\n'),
+    'docs/getting-started.md': section(await read('docs/getting-started.md'), '## 5. Commit the history\n'),
     'README.md': (await read('README.md')).match(/^Commit `afterimage\/`.*$/m)?.[0],
     [skillFile]: (await read(skillFile)).match(/`git status --short -- [^`]*`/)?.[0],
     [ruleFile]: (await read(ruleFile)).match(/`git status --short -- [^`]*`/)?.[0],

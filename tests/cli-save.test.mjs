@@ -20,11 +20,11 @@ async function temp(t) {
   return root;
 }
 
-// Collects what a command writes so tests can read it back. The build's own output is dropped.
+// Collects what a command writes so tests can read it back. The build's own output is dropped, and init installs nothing.
 async function run(cwd, args, context = {}) {
   const out = [];
   const err = [];
-  const code = await main(args, { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, buildStdio: 'ignore', ...context });
+  const code = await main(args, { cwd, stdout: { write: text => out.push(text) }, stderr: { write: text => err.push(text) }, buildStdio: 'ignore', install: async () => {}, ...context });
   return { code, stdout: out.join(''), stderr: err.join('') };
 }
 

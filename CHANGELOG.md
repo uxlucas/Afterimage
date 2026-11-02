@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+
+- **One command to install.** `npx afterimage-cli init` now does the whole setup: init installs afterimage-cli in the project as a dev dependency, at its own version, with the package manager your lockfile names (npm, pnpm, Yarn or Bun). A plain HTML folder no longer needs `npm init -y` first, since init creates `package.json` before the install. A project that already lists afterimage-cli installs nothing, and a failed install leaves the rest of the setup in place and prints the command to finish it. The setup prompt and the skill use the one command too.
+
 ## 0.2.3
 
 - **Scroll sync covers panels.** In an app that scrolls a panel instead of the page, Scroll synced in side by side, the wipe and holding B only moved the page, which never scrolls, so the two versions drifted apart. Now each panel follows the same panel in the other version, even when the page around it changed between versions.

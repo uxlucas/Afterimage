@@ -13,6 +13,8 @@ import { checkExample, servePlain } from './harness.mjs';
 const test = (name, fn) => nodeTest(name, { timeout: 180_000 }, fn);
 
 const example = name => fileURLToPath(new URL(`../../examples/${name}/`, import.meta.url));
+// A fixture's package.json lists afterimage-cli, as an installed project's does, so init runs this checkout and installs
+// nothing from the registry.
 const fixture = name => fileURLToPath(new URL(`./fixtures/${name}/`, import.meta.url));
 const bin = fileURLToPath(new URL('../../bin/afterimage.mjs', import.meta.url));
 
