@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { groupByDay, formatSaved, previousVersion, versionNumber } from '../state/versions.js';
 import { reviewKey } from '../../engine/review.js';
 import { useBackgroundCounts } from '../hooks/useBackgroundCounts.js';
+import { useRoute } from '../hooks/useRouteSync.js';
 import { useReducedMotion } from '../hooks/useMedia.js';
 import { useScrollEnd } from './scrollFade.js';
 import { frameWindow } from '../frames.js';
@@ -45,6 +46,8 @@ export default function VersionList({ versions, state, dispatch, review, targetR
   const groups = useMemo(() => groupByDay(shown, new Date()), [shown]);
   const counts = useBackgroundCounts(pairsInView);
   const exploring = state.mode === 'explore';
+  // Each row counts the changes on the route the prototype shows, as the live review does.
+  const shownRoute = useRoute();
 
   // Rows in view become pairs for the background queue, top to bottom. The selected version is left out
   // while exploring: the live review is already counting it.
@@ -62,7 +65,7 @@ export default function VersionList({ versions, state, dispatch, review, targetR
         if (exploring && version.id === state.versionId) continue;
         const base = previousVersion(versions, version.id);
         if (!base) continue;
-        pairs.push({ key: reviewKey({ target: version, base, width, height }), target: version, base, width, height });
+        pairs.push({ key: reviewKey({ target: version, base, width, height, route: shownRoute }), target: version, base, width, height, route: shownRoute });
       }
       setPairsInView(current => (current.map(pair => pair.key).join() === pairs.map(pair => pair.key).join() ? current : pairs));
     };
@@ -81,7 +84,7 @@ export default function VersionList({ versions, state, dispatch, review, targetR
     const onResize = () => { clearTimeout(timer); timer = setTimeout(publish, VIEW_SETTLE_MS); };
     window.addEventListener('resize', onResize);
     return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener('resize', onResize); };
-  }, [shown, versions, exploring, state.versionId, targetRef]);
+  }, [shown, versions, exploring, state.versionId, targetRef, shownRoute]);
 
   // Opening the list puts the current version in the middle of it. Later selections only scroll as far as needed.
   const placed = useRef(false);

@@ -57,10 +57,32 @@ test('Dense comparisons keep every added and removed region with no silent cap',
   assert.equal(entries.at(-1).details[0].before, 'Old item 199');
 });
 
-test('Position-only differences follow content edits without being discarded', () => {
-  const before = [record('layout'), record('text')];
-  const after = [record('layout', { rect: { x: 100, y: 20, width: 100, height: 40 } }), record('text', { text: 'Changed copy' })];
-  const { entries } = buildReview(after, before);
-  assert.deepEqual(entries.map(entry => entry.key), ['text', 'layout']);
-  assert.equal(entries[1].layoutOnly, true);
+test('Elements that only moved because of a real edit are not changes of their own', () => {
+  // A note added under an order total widens its column: every other cell of the table shifts sideways.
+  const cells = Array.from({ length: 40 }, (_, i) => `cell-${i}`);
+  const before = [record('total'), ...cells.map(key => record(key))];
+  const after = [record('total', { text: '€704.46 Rec. price' }), record('note', { ancestors: ['total'] }), ...cells.map(key => record(key, { rect: { x: 18, y: 20, width: 100, height: 40 } }))];
+  const { entries, comparison } = buildReview(after, before);
+  assert.deepEqual(entries.map(entry => entry.key), ['total', 'note']);
+  assert.deepEqual(comparison.current.map(change => change.key), ['total', 'note']);
+  assert.deepEqual(comparison.previous.map(change => change.key), ['total']);
+});
+
+test('A cell that only grew to hold an added note is not a second change', () => {
+  // The note is its own entry; the cell around it only got wider.
+  const before = [record('total')];
+  const after = [record('total', { rect: { x: 10, y: 20, width: 120, height: 40 } }), record('note', { ancestors: ['total'] })];
+  const { entries, comparison } = buildReview(after, before);
+  assert.deepEqual(entries.map(entry => entry.key), ['note']);
+  assert.deepEqual(entries.map(entry => entry.number), [1]);
+  assert.deepEqual(comparison.current.map(change => change.key), ['note']);
+  assert.deepEqual(comparison.previous, []);
+});
+
+test('A version whose only difference is layout still reports the move', () => {
+  const { entries, comparison } = buildReview([record('card', { rect: { x: 10, y: 20, width: 240, height: 40 } })], [record('card')]);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].layoutOnly, true);
+  assert.equal(entries[0].kindLabel, 'Moved or resized');
+  assert.deepEqual(comparison.current.map(change => change.key), ['card']);
 });

@@ -35,7 +35,7 @@ Run your prototype:
 npm run dev
 ```
 
-The pill sits at the bottom right of the page. Save keeps the current state as the next version. History opens every version over the page, with what changed between any two, and Esc closes it. Once you deploy, the same pill on the live site shows everyone the versions, without Save.
+The pill sits at the bottom of the page and is the same bar the viewer has. Highlight outlines what changed since the version before, on the page you are on; Compare shows the two side by side; Version N of N lists every version. Turn it off again, or press Esc, and you are back on the live page. Save keeps the current state as the next version. Once you deploy, the same pill on the live site shows everyone the versions, without Save.
 
 You can also save from the command line, or have your agent do it:
 

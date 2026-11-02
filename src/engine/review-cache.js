@@ -3,6 +3,9 @@
 
 const PREFIX = 'afterimage-count:';
 const LIMIT = 500;
+// Which counting rules made a count. Raised when they change, so the list never shows a count the review would not.
+// 2: moves caused by a real edit stop counting.
+const RULES = 2;
 
 function storage() {
   try {
@@ -16,8 +19,8 @@ export function readCount(key) {
   try {
     const raw = storage()?.getItem(PREFIX + key);
     if (!raw) return null;
-    const { summary } = JSON.parse(raw);
-    return summary && typeof summary.total === 'number' ? summary : null;
+    const { summary, rules } = JSON.parse(raw);
+    return rules === RULES && summary && typeof summary.total === 'number' ? summary : null;
   } catch {
     return null;
   }
@@ -31,7 +34,7 @@ export function writeCount(key, summary) {
     if (!store) return;
     // A re-run that found the same counts (most of them) leaves storage alone.
     if (sameSummary(readCount(key), summary)) return;
-    store.setItem(PREFIX + key, JSON.stringify({ summary, at: Date.now() }));
+    store.setItem(PREFIX + key, JSON.stringify({ summary, at: Date.now(), rules: RULES }));
     const entries = [];
     for (let i = 0; i < store.length; i++) {
       const name = store.key(i);

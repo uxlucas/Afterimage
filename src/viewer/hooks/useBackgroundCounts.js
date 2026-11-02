@@ -4,12 +4,13 @@ import { buildReview } from '../../engine/diff-records.js';
 import { summarize } from '../../engine/review.js';
 import { readCount } from '../../engine/review-cache.js';
 import { createQueue } from '../../engine/background-queue.js';
-import { replaceFrame, showsVersion } from '../frames.js';
+import { replaceFrame, showsVersion, withRoute } from '../frames.js';
 
 const LOAD_TIMEOUT_MS = 10000;
 const SETTLE_MS = 80; // same pause the live review takes after a load, for scripts that touch the page on start
 
-// Pair = { key, target, base, width, height }: key is reviewKey of the two versions at that viewport size.
+// Pair = { key, target, base, width, height, route }: key is reviewKey of the two versions at that viewport size, on
+// that route.
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Captures are synchronous and can take a while on a big page, so start one when the visitor isn't busy.
@@ -28,12 +29,14 @@ function makeSlot() {
   frame.dataset.afterimageBackground = '';
   frame.style.cssText = 'position:fixed;left:-100000px;top:0;border:0;pointer-events:none;';
   document.body.append(frame);
-  return { frame, id: null };
+  return { frame, id: null, route: '' };
 }
 
-function load(slot, version) {
-  if (slot.id === version.id && showsVersion(slot.frame, version)) return Promise.resolve();
+// The version on `route`, the hash route the prototype shows (see state/route.js); a slot on another route reloads.
+function load(slot, version, route) {
+  if (slot.id === version.id && slot.route === route && showsVersion(slot.frame, version)) return Promise.resolve();
   slot.id = null;
+  slot.route = route;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { stop(); reject(new Error(`${version.id} did not load in time.`)); }, LOAD_TIMEOUT_MS);
     // Only the load of this version's page counts: a late load from the slot's previous page is not it.
@@ -45,23 +48,23 @@ function load(slot, version) {
     };
     const stop = () => { clearTimeout(timer); slot.frame.removeEventListener('load', onLoad); };
     slot.frame.addEventListener('load', onLoad);
-    replaceFrame(slot.frame, new URL(version.file, location.href).href);
+    replaceFrame(slot.frame, withRoute(new URL(version.file, location.href).href, route));
   });
 }
 
 // Two frames do every comparison. Neighbouring rows share a version (v59 is the base of v60 and the
 // target of v59), so the frame that already holds one side is reused and only the other side loads.
 async function compare(slots, pair) {
-  const { target, base, width, height } = pair;
-  let targetSlot = slots.find(slot => slot.id === target.id) ?? null;
-  let baseSlot = slots.find(slot => slot !== targetSlot && slot.id === base.id) ?? null;
+  const { target, base, width, height, route = '' } = pair;
+  let targetSlot = slots.find(slot => slot.id === target.id && slot.route === route) ?? null;
+  let baseSlot = slots.find(slot => slot !== targetSlot && slot.id === base.id && slot.route === route) ?? null;
   targetSlot ??= slots.find(slot => slot !== baseSlot);
   baseSlot ??= slots.find(slot => slot !== targetSlot);
   for (const slot of slots) {
     slot.frame.style.width = `${width}px`;
     slot.frame.style.height = `${height}px`;
   }
-  await Promise.all([load(targetSlot, target), load(baseSlot, base)]);
+  await Promise.all([load(targetSlot, target, route), load(baseSlot, base, route)]);
   const targetDoc = targetSlot.frame.contentDocument;
   const baseDoc = baseSlot.frame.contentDocument;
   await Promise.all([targetDoc.fonts.ready, baseDoc.fonts.ready]);

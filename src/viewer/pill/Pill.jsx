@@ -6,6 +6,7 @@ import VersionField from './VersionField.jsx';
 import TickStrip from './TickStrip.jsx';
 import HighlightSegment from './HighlightSegment.jsx';
 import LayoutToggle from './LayoutToggle.jsx';
+import { framed } from '../hooks/usePageHost.js';
 import './pill.css';
 
 function CompareIcon() {
@@ -221,9 +222,12 @@ export default function Pill({ state, dispatch, versions, review, phone, onOpenP
         </div>
       )}
 
-      <button type="button" ref={retractRef} className="pill-btn retract-btn" aria-label="Hide Afterimage" onClick={onRetract}>
-        <RetractIcon />
-      </button>
+      {/* Over a live page, turning everything off is what puts the viewer away. */}
+      {!framed && (
+        <button type="button" ref={retractRef} className="pill-btn retract-btn" aria-label="Hide Afterimage" onClick={onRetract}>
+          <RetractIcon />
+        </button>
+      )}
     </div>
   );
 }

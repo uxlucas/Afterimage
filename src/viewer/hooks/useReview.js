@@ -41,11 +41,14 @@ export function useReview({ targetFrame, baseFrame, target, base, enabled }) {
     const schedule = () => debounce.schedule();
 
     const frames = () => [targetFrame.current, baseFrame.current];
-    const loaded = () => showsVersion(targetFrame.current, target) && showsVersion(baseFrame.current, base);
+    // Both on their version, and on one route: while the base is still following the target to another route of a
+    // hash-routed app, the two pages differ everywhere, and that is not a change. Its hashchange schedules the next run.
+    const sameRoute = () => frameWindow(targetFrame.current)?.location.hash === frameWindow(baseFrame.current)?.location.hash;
+    const loaded = () => showsVersion(targetFrame.current, target) && showsVersion(baseFrame.current, base) && sameRoute();
     // null once the target frame isn't ours to read any more, so a result for it is never accepted.
     const currentKey = () => {
       const win = frameWindow(targetFrame.current);
-      return win ? reviewKey({ target, base, width: win.innerWidth, height: win.innerHeight }) : null;
+      return win ? reviewKey({ target, base, width: win.innerWidth, height: win.innerHeight, route: win.location.hash }) : null;
     };
 
     // The honest state when a frame shows something other than its version (it navigated away, maybe to

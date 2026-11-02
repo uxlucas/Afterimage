@@ -64,8 +64,36 @@ function setRetracted(state, retracted) {
   return retracted ? { ...state, retracted: true, panelOpen: false } : { ...state, retracted: false };
 }
 
+// Framed over a live prototype, the viewer is that page with something on top. The latest version with nothing on top
+// is the page itself, so the viewer gives the page back. Layout, zoom and filter are only remembered for next time.
+export function showsLivePage(state, versions) {
+  return state.versionId === versions[0].id && state.mode === 'explore' && !state.highlights && !state.panelOpen;
+}
+
+// The page pill's buttons: 'highlight', 'compare' or 'versions'. Whatever the viewer was left in, it opens on the
+// latest version in that one state. A first version has nothing to highlight or compare, so it shows the list.
+function openFromPage(versions, state, view) {
+  const base = previousVersion(versions, versions[0].id);
+  const shown = base ? view : 'versions';
+  return {
+    ...state,
+    versionId: versions[0].id,
+    mode: shown === 'compare' ? 'compare' : 'explore',
+    baseId: shown === 'compare' ? base.id : null,
+    highlights: shown === 'highlight',
+    panelOpen: shown === 'versions',
+    folders: shown === 'versions' ? { ...state.folders, versions: true } : state.folders,
+    changeIndex: null,
+    peek: false,
+    retracted: false,
+  };
+}
+
 export const reducer = versions => (state, action) => {
   switch (action.type) {
+    case 'openFromPage':
+      return openFromPage(versions, state, action.view);
+
     case 'selectVersion':
       return selectVersion(versions, state, action.id);
 

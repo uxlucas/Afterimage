@@ -260,6 +260,12 @@ test('Esc with nothing open leaves a framed viewer, and only then', () => {
   assert.equal(resolveShortcut('escape', envOf({ mode: 'compare' }, { framed: true })).effect, 'leaveCompare');
 });
 
+// Over a live page the viewer has no pill to put away: the page's own pill is what stays when it goes.
+test('. does nothing in a framed viewer', () => {
+  assert.equal(resolveShortcut({ type: 'toggleRetracted' }, envOf({}, { framed: true })).consumed, false);
+  assert.equal(resolveShortcut({ type: 'toggleRetracted' }, envOf({})).consumed, true);
+});
+
 test('with the sheet open, only Esc, ? and letting go of B act', () => {
   const env = envOf({}, { helpOpen: true });
   assert.deepEqual(resolveShortcut({ type: 'stepVersion', delta: 1 }, env), gone);

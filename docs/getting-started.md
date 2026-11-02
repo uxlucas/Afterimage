@@ -73,7 +73,7 @@ If nothing changed since the last version, nothing is saved and it says so. A sa
 npm run dev
 ```
 
-Your app starts as it always does, with Afterimage beside it, and the pill sits at the bottom right of the page. Save keeps the current state as the next version, the same as `afterimage save`. History opens every version over the page, and Esc closes it. A plain HTML folder is served by Afterimage itself, at the address after `Your prototype is at`.
+Your app starts as it always does, with Afterimage beside it, and the pill sits at the bottom of the page: the same bar the viewer has. Highlight outlines what changed since the version before, on the page you are on; Compare shows the two side by side; Version N of N lists every version. Turn it off again, or press Esc, and you are back on the live page. Save keeps the current state as the next version, the same as `afterimage save`. A plain HTML folder is served by Afterimage itself, at the address after `Your prototype is at`.
 
 It keeps running until you stop it with Ctrl-C. It also prints `Afterimage is running at http://localhost:4321/afterimage/`, where the history opens on its own page. The port moves to the next free one when 4321 is busy. If your `dev` script doesn't start with `afterimage dev`, run your own dev command through it instead: `npx afterimage dev -- next dev`.
 

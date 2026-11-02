@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- **The pill is the viewer's own bar.** It sits at the bottom of the page and reads Version N of N, Highlight, Compare and Save. Each one opens the viewer straight in that state, on the page and scroll you are on, so Highlight looks like the outlines switching on in place. There is no History step and no close button: turn Highlight off, leave Compare or close the list (or press Esc) and you are back on the live page, on the route you left the viewer on.
+- **No flash when it opens.** Pointing at the pill loads the viewer out of sight, and it only shows once it is on the right page. Before, a dark layer covered the page while the viewer loaded.
+- **Hash-routed apps compare page with page.** In an app that changes page by its hash (`#/orders`), the older version now follows to the same page. Before, it stayed on the first page, and the two different pages counted as a thousand changes. Change counts are kept per page.
+- **Moves caused by an edit are not changes of their own.** When a version has real edits, the elements that only moved or resized because of them (the cells beside a column that got wider, the rows under one that got taller) are no longer outlined or counted. A version whose only difference is a move still shows it. Counts the version list cached under the old rule are worked out again.
+
 ## 0.2.0
 
 - **The pill.** Afterimage now sits on the prototype itself. Save keeps the current state as the next version, and History opens every version over the page, in the same tab; Esc or the close button returns to the prototype. On a deployed site the same pill shows everyone the versions, without Save. It draws in a shadow root, so the app's CSS can't reach it, and it stays out of saved versions.

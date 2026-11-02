@@ -6,6 +6,8 @@ import { toSearch } from './state/url.js';
 import { rememberRetracted } from './state/remember.js';
 import { urlWriter } from './urlSync.js';
 import { useReview } from './hooks/useReview.js';
+import { useRouteSync } from './hooks/useRouteSync.js';
+import { framed, usePageHost } from './hooks/usePageHost.js';
 import { usePhone } from './hooks/useMedia.js';
 import { useShortcuts } from './hooks/useShortcuts.js';
 import { createTipGate } from './keyboard.js';
@@ -130,7 +132,7 @@ function Dock({ state, dispatch, versions, review, phone, targetRef, baseRef }) 
 
 export default function App({ versions }) {
   const reduce = useMemo(() => reducer(versions), [versions]);
-  const [state, dispatch] = useReducer(reduce, location.search, search => ({ ...initialState(versions, search), retracted: retractMemory.read() }));
+  const [state, dispatch] = useReducer(reduce, location.search, search => ({ ...initialState(versions, search), retracted: framed ? false : retractMemory.read() }));
   const targetRef = useRef(null);
   const baseRef = useRef(null);
   const phone = usePhone();
@@ -139,7 +141,8 @@ export default function App({ versions }) {
   // throw out of this effect, which would take the app down.
   const search = toSearch(state, versions);
   useEffect(() => { urlWriter.write(search); }, [search]);
-  useEffect(() => { retractMemory.write(state.retracted); }, [state.retracted]);
+  // Over a live page there is nothing to put away: the page's own pill is what is left when the viewer goes.
+  useEffect(() => { if (!framed) retractMemory.write(state.retracted); }, [state.retracted]);
   useEffect(() => {
     const flush = () => urlWriter.flush();
     window.addEventListener('pagehide', flush);
@@ -148,6 +151,8 @@ export default function App({ versions }) {
 
   const target = versions.find(entry => entry.id === state.versionId) ?? versions[0];
   const base = comparisonBase(versions, state);
+  useRouteSync({ targetRef, baseRef });
+  usePageHost({ state, dispatch, versions, targetRef });
   const review = useReview({ targetFrame: targetRef, baseFrame: baseRef, target, base, enabled: base != null });
 
   // A change number past the list (?change=99) selects nothing once the review knows the list.

@@ -5,7 +5,7 @@ description: Adds Afterimage (afterimage-cli) to this prototype and saves, names
 
 # Afterimage
 
-Afterimage keeps a version history of this prototype. Each save builds the prototype and stores the built page as the next version (v1, v2, v3 and so on) in `afterimage/`. A pill sits on the running prototype: Save keeps the current state as the next version, and History opens every version over the page, with what changed between any two. On the deployed site the same pill shows the history to everyone who opens it. A version is the built page, kept to compare against and to share. It is not a backup of the source: the source belongs in git. Run every command from the project root, where `afterimage.config.json` is.
+Afterimage keeps a version history of this prototype. Each save builds the prototype and stores the built page as the next version (v1, v2, v3 and so on) in `afterimage/`. A pill sits on the running prototype: Save keeps the current state as the next version; Highlight outlines what changed since the version before, right on the page; Compare and Version N of N open the rest of the history in place. On the deployed site the same pill shows the history to everyone who opens it. A version is the built page, kept to compare against and to share. It is not a backup of the source: the source belongs in git. Run every command from the project root, where `afterimage.config.json` is.
 
 The user works on the prototype, not in a terminal. Do the steps yourself and reply in a line or two, with a link when there is one. Never hand the user a command to run.
 
@@ -91,7 +91,7 @@ With dev on its default port, a comparison is `http://localhost:4321/afterimage/
 - **"Save a version called Remember me with a note that it keeps people signed in for 30 days."** Run `npx afterimage save "Remember me" --note "Keeps people signed in for 30 days."` and tell the user the id it printed, in one line.
 - **"What changed since v2?"** Read `afterimage/versions.json`. If v2 is the latest version, tell the user nothing has changed since v2, because it is the newest version, and don't open a comparison. If v2 isn't listed, say so. Otherwise make sure dev is running and give the user the history's URL with `?version=<latest>&mode=compare&base=v2` added. The viewer shows the changes, so don't write a text diff. It compares saved versions: if the prototype has changed since the last save, say that those changes aren't in the comparison.
 - **"Get the version history ready to deploy."** Run `npx afterimage build`. If the project isn't a git repository, tell the user the history has to be committed to the repository the site deploys from, and stop. Otherwise run `git status --short -- afterimage afterimage.config.json package.json package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb .gitattributes vercel.json netlify.toml` and tell the user which of those aren't committed yet, since the host only sees what is in git. The rest of the project is the user's business. Tell them the history will be at `/afterimage/` on the deployed site, behind the same pill. Don't commit, push or deploy unless the user asks.
-- **"Show me the version history."** Make sure dev is running, then tell the user to press History on the pill, and give them the history's URL too.
+- **"Show me the version history."** Make sure dev is running, then tell the user to press Version N of N on the pill, and give them the history's URL too.
 
 ## Rules
 

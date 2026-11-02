@@ -113,6 +113,9 @@ export function resolveShortcut(token, { state, versions, entries, phone, helpOp
     // Closing the panel from inside it hands focus back to the pill, as Esc does.
     case 'togglePanel':
       return act(state.panelOpen && focusInPanel ? 'closePanel' : 'togglePanel', ...back);
+    // Over a live page there is no pill to put away (see hooks/usePageHost.js).
+    case 'toggleRetracted':
+      return framed ? none : act(null, token);
     default:
       return act(null, token);
   }

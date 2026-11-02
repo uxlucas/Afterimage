@@ -1,7 +1,8 @@
 // Pure helpers around the review engine. No React, no DOM: node:test covers all of it.
 
-export function reviewKey({ target, base, width, height }) {
-  return [target.sha256, base.sha256, width, height].join('|');
+// route is the hash route both versions show (#/orders in a hash-routed app); the entry page keeps the bare key.
+export function reviewKey({ target, base, width, height, route = '' }) {
+  return [target.sha256, base.sha256, width, height, ...(route ? [route] : [])].join('|');
 }
 
 export function summarize(entries) {

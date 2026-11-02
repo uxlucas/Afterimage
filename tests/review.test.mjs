@@ -30,6 +30,16 @@ test('reviewKey changes when size or a hash changes', () => {
   assert.notEqual(wide, reviewKey({ target, base: version('v1', 'ddd'), width: 1280, height: 720 }));
 });
 
+// A hash-routed app shows another page per route, with its own count. The entry page keeps the key it always had.
+test('reviewKey tells the routes of a hash-routed app apart', () => {
+  const target = version('v2', 'aaa'), base = version('v1', 'bbb');
+  const entry = reviewKey({ target, base, width: 1280, height: 720 });
+  assert.equal(reviewKey({ target, base, width: 1280, height: 720, route: '' }), entry);
+  assert.equal(entry, 'aaa|bbb|1280|720');
+  assert.notEqual(reviewKey({ target, base, width: 1280, height: 720, route: '#/orders' }), entry);
+  assert.notEqual(reviewKey({ target, base, width: 1280, height: 720, route: '#/orders' }), reviewKey({ target, base, width: 1280, height: 720, route: '#/products' }));
+});
+
 test('summarize counts kinds', () => {
   const { entries } = syntheticReview();
   assert.deepEqual(summarize(entries), { total: 133, changed: 109, added: 12, removed: 12 });
@@ -47,12 +57,12 @@ test('filterEntries narrows by kind and keeps review order', () => {
 });
 
 test('filterEntries changed includes layout-only entries', () => {
-  const before = [record('layout'), record('text')];
-  const after = [record('layout', { rect: { x: 100, y: 20, width: 100, height: 40 } }), record('text', { text: 'Changed copy' })];
+  const before = [record('layout'), record('aside')];
+  const after = [record('layout', { rect: { x: 100, y: 20, width: 100, height: 40 } }), record('aside', { rect: { x: 10, y: 20, width: 300, height: 40 } })];
   const { entries } = buildReview(after, before);
   const changed = filterEntries(entries, 'changed');
   assert.equal(changed.length, 2);
-  assert.ok(changed.some(entry => entry.layoutOnly));
+  assert.ok(changed.every(entry => entry.layoutOnly));
 });
 
 test('acceptResult drops results for a stale key', () => {
@@ -105,6 +115,9 @@ test('review cache round-trips, survives bad data and keeps at most 500 keys', (
     assert.deepEqual(readCount('one'), summary);
     store.set('afterimage-count:bad', '{nope');
     assert.equal(readCount('bad'), null);
+    // A count an older engine worked out (before knock-on moves stopped counting) is not shown.
+    store.set('afterimage-count:old', JSON.stringify({ summary: { total: 439, changed: 430, added: 9, removed: 0 }, at: 1 }));
+    assert.equal(readCount('old'), null);
     store.set('unrelated', 'keep');
     for (let i = 0; i < 520; i++) writeCount(`key-${i}`, { total: i, changed: i, added: 0, removed: 0 });
     const keys = [...store.keys()].filter(k => k.startsWith('afterimage-count:'));

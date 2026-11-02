@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { bindFrames, bindShortcuts, resolveShortcut } from '../keyboard.js';
+import { leaveForPage } from './usePageHost.js';
 
 // Binds the shortcuts to the viewer's window and to each prototype frame, and carries out what
 // resolveShortcut decides. `env` is read fresh on every key, so the bindings only change when the frames do.
@@ -9,7 +10,7 @@ export function useShortcuts(env) {
   useEffect(() => { latest.current = env; });
 
   const handle = useCallback(token => {
-    const { state, dispatch, versions, review, phone, helpOpen, setHelpOpen, togglePanel, closePanel, fieldRef, handoffRef, noteDockFocus, focusFieldWhenBack } = latest.current;
+    const { state, dispatch, versions, review, phone, targetRef, helpOpen, setHelpOpen, togglePanel, closePanel, fieldRef, handoffRef, noteDockFocus, focusFieldWhenBack } = latest.current;
     const focusInPanel = Boolean(document.activeElement?.closest?.('.panel'));
     const result = resolveShortcut(token, { state, versions, entries: review.entries, phone, helpOpen, hasField: Boolean(fieldRef.current), focusInPanel, framed: window.parent !== window });
     if (!result.consumed) return false;
@@ -26,9 +27,8 @@ export function useShortcuts(env) {
         fieldRef.current.select();
         break;
       case 'focusFieldWhenBack': focusFieldWhenBack.current = true; break;
-      // The pill's layer (runtime/overlay.js) listens for this and closes. The message says nothing private, so any
-      // parent may hear it.
-      case 'leaveViewer': window.parent.postMessage({ type: 'afterimage:close' }, '*'); break;
+      // The page's pill (runtime/overlay.js) hides the viewer and shows the live page again.
+      case 'leaveViewer': leaveForPage(targetRef); break;
       default:
     }
     // Focus on the pill follows it into the chip and back.

@@ -25,6 +25,13 @@ export function withoutHash(href) {
   }
 }
 
+// `href` with its hash set to `route` ('#/orders'), or taken off when route is ''. Works on a relative file path too.
+// A hash-routed app keeps its pages there, and both versions are held to the same one.
+export function withRoute(href, route) {
+  const cut = href.indexOf('#');
+  return (cut === -1 ? href : href.slice(0, cut)) + route;
+}
+
 export function sameDocument(a, b) {
   const left = withoutHash(a);
   return left !== null && left === withoutHash(b);

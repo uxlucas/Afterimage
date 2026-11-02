@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { entryPath, frameWindow, replaceFrame, withoutHash, sameDocument, showsVersion } from '../src/viewer/frames.js';
+import { entryPath, frameWindow, replaceFrame, withoutHash, sameDocument, showsVersion, withRoute } from '../src/viewer/frames.js';
+
+// Both versions show the same route of a hash-routed app (#/orders), so the viewer moves a frame's hash and nothing else.
+test('withRoute sets or clears the hash and keeps the rest of the address', () => {
+  assert.equal(withRoute('http://localhost:4321/afterimage/versions/v2/index.html', '#/orders'), 'http://localhost:4321/afterimage/versions/v2/index.html#/orders');
+  assert.equal(withRoute('http://localhost:4321/?q=1#/products', '#/orders'), 'http://localhost:4321/?q=1#/orders');
+  assert.equal(withRoute('http://localhost:4321/?q=1#/products', ''), 'http://localhost:4321/?q=1');
+  assert.equal(withRoute('versions/v2/index.html', '#/orders'), 'versions/v2/index.html#/orders');
+  assert.equal(withRoute('versions/v2/index.html#/a', ''), 'versions/v2/index.html');
+});
 import { createUrlWriter } from '../src/viewer/state/urlWriter.js';
 
 // A frame whose window is same-origin, or one that navigated cross-origin: reading `document` throws there.

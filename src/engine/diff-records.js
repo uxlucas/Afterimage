@@ -75,12 +75,21 @@ export function buildReview(current, previous) {
         if (Math.abs(old.width - now.width) > 2 || Math.abs(old.height - now.height) > 2) details.push({ label: 'Size', layout: true, before: `${Math.round(old.width)} × ${Math.round(old.height)}px`, after: `${Math.round(now.width)} × ${Math.round(now.height)}px` });
       }
     }
-    const layoutOnly = members.every(member => member.kind === 'changed' && member.reasons.every(reason => reason === 'layout'));
+    // Something added or removed inside a changed region is already an entry of its own (only same kinds fold
+    // together), so a cell that only grew to hold an added note is still just a move.
+    const layoutOnly = root.kind === 'changed' && members.every(member => member.kind !== 'changed' || member.reasons.every(reason => reason === 'layout'));
     const kindLabel = root.kind === 'added' ? 'Added' : root.kind === 'removed' ? 'Removed' : layoutOnly ? 'Moved or resized' : members.some(member => member.reasons.includes('content')) ? 'Content changed' : 'Appearance changed';
     return { key: root.key, kind: root.kind, label: after?.label || before?.label || 'Page element', kindLabel, layoutOnly, before, after, details };
   });
-  // Put content and appearance first; downstream layout shifts remain available.
-  entries.sort((a, b) => Number(a.layoutOnly) - Number(b.layoutOnly));
-  entries.forEach((entry, index) => { entry.number = index + 1; });
-  return { entries, comparison };
+  // Knock-on moves: when a version has real edits, whatever only moved or resized because of them (the cells beside a
+  // column that got wider, the rows under one that got taller) is not a change of its own. With no real edit, the move
+  // is the change, and it stays.
+  const real = entries.filter(entry => !entry.layoutOnly);
+  const kept = real.length ? real : entries;
+  const keys = new Set(kept.map(entry => entry.key));
+  kept.forEach((entry, index) => { entry.number = index + 1; });
+  return {
+    entries: kept,
+    comparison: { current: comparison.current.filter(record => keys.has(record.key)), previous: comparison.previous.filter(record => keys.has(record.key)) },
+  };
 }

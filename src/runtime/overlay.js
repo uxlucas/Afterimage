@@ -8,8 +8,11 @@
 // How this copy was loaded says which, so a built site never asks for a helper, even served from this machine:
 // - a script tag dev served carries dev's stamp (window.__afterimageDev); any other script tag is a built site's copy.
 // - an import has no currentScript. Bundlers replace process.env.NODE_ENV, so a production build says it is one.
-// History opens the viewer as a layer over the page, in the same tab; the close button, Esc, or the viewer itself
-// (it posts afterimage:close when it is framed) close it again.
+//
+// The pill is the viewer's own bar, in the same place: Version N of N, Highlight, Compare, and Save. Pointing at it
+// loads the viewer, hidden, over the page; a button asks the viewer for that state, on the page's route and scroll, and
+// the viewer only shows once it is there, so the page seems to switch the outlines on in place. Turning everything off
+// again (or Esc) hands the page back, where the visitor left the viewer. The messages are in viewer/hooks/usePageHost.js.
 //
 // It is plain JavaScript with no imports, so it runs as a classic script and as a module, and it does nothing where
 // there is no document (a server render of a bundled app). It draws in a shadow root, so the app's CSS can't reach it.
@@ -35,6 +38,7 @@
   } catch { /* a script tag */ }
   const inDev = local && (scriptTag ? servedByDev : mode !== 'production');
   const helperPorts = Array.from({ length: 10 }, (_, i) => 4321 + i);
+  const OPEN_TIMEOUT_MS = 12000;
 
   const getJson = async (url, timeout = 1500) => {
     try {
@@ -72,44 +76,51 @@
     return null;
   }
 
+  // The viewer's pill (viewer/pill/pill.css and styles/tokens.css), so the two read as one control.
   const css = `
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .dock { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; font: 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    .dock { position: fixed; left: 0; right: 0; bottom: 16px; z-index: 2147483646; display: flex; justify-content: center;
+      padding: 0 16px; pointer-events: none; font: 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
       -webkit-font-smoothing: antialiased; color: #ededed; }
-    .pill { display: flex; align-items: center; gap: 2px; padding: 5px; border-radius: 999px; background: #1b1b1b;
-      box-shadow: 0 0 0 1px #ffffff14, 0 1px 2px #0000004d, 0 10px 28px #00000040; user-select: none; -webkit-user-select: none; }
-    .mark { flex: none; width: 34px; height: 34px; display: grid; place-items: center; }
-    .label { padding: 0 8px 0 2px; color: #8e8e8e; white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .label b { color: #ededed; font-weight: 500; }
+    .pill { display: flex; align-items: center; gap: 2px; max-width: 100%; padding: 5px; border-radius: 999px; background: #1b1b1b;
+      white-space: nowrap; box-shadow: 0 0 0 1px #ffffff14, 0 1px 2px #0000004d, 0 10px 28px #00000040; pointer-events: auto;
+      user-select: none; -webkit-user-select: none; }
+    .num { font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-size: 12px; }
     .sep { flex: none; width: 1px; height: 18px; margin: 0 4px; background: #ffffff14; }
-    button { appearance: none; height: 34px; margin: 0; padding: 0 12px; border: 0; border-radius: 999px; background: transparent;
-      color: inherit; font: inherit; line-height: 1; white-space: nowrap; cursor: pointer; }
-    button:hover:not(:disabled) { background: #2a2a2a; }
+    .label { padding: 0 12px; color: #8e8e8e; }
+    button { appearance: none; display: inline-flex; align-items: center; gap: 8px; height: 34px; margin: 0; padding: 0 12px;
+      border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; line-height: 1; white-space: nowrap;
+      cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+      transition: background-color 150ms ease, color 150ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1); }
+    button:active:not(:disabled) { transform: scale(0.97); }
     button:disabled { color: #5c5c5c; cursor: default; }
-    button:focus-visible, input:focus-visible { outline: 2px solid #ededed8c; outline-offset: 1px; }
+    @media (hover: hover) { button:hover:not(:disabled) { background: #2a2a2a; } }
+    button:focus-visible, input:focus-visible { outline: 2px solid #ededed8c; outline-offset: -2px; }
+    .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #6fbf73; }
+    .field { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; margin-left: -2px; border-radius: 6px;
+      background: #ffffff0d; color: #ededed; }
+    .of { color: #8e8e8e; margin-left: -4px; }
+    .of .num { margin-left: 4px; }
     .primary { background: #ededed; color: #1b1b1b; }
-    .primary:hover:not(:disabled) { background: #ffffff; }
+    @media (hover: hover) { .primary:hover:not(:disabled) { background: #ffffff; } }
+    button[aria-busy='true']::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #e5a83b;
+      animation: pulse 0.8s ease-in-out infinite alternate; }
     input { width: 180px; height: 34px; margin: 0 2px 0 0; padding: 0 12px; border: 0; border-radius: 999px; background: #2a2a2a;
       color: #ededed; font: inherit; }
     input::placeholder { color: #8e8e8e; }
-    .status { padding: 0 12px 0 2px; white-space: nowrap; }
-    .status.bad { color: #e0705f; white-space: normal; max-width: 320px; line-height: 1.35; padding: 6px 12px 6px 2px; }
+    .status { padding: 0 12px; }
+    .status.bad { color: #e0705f; white-space: normal; max-width: 320px; line-height: 1.35; padding: 6px 12px; }
     .busy { display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: #e5a83b;
       vertical-align: 1px; animation: pulse 1s ease-in-out infinite alternate; }
     @keyframes pulse { from { opacity: 0.35; } to { opacity: 1; } }
-    .layer { position: fixed; inset: 0; z-index: 2147483647; background: #1b1b1b; opacity: 0; transition: opacity 160ms ease-out; }
-    .layer[data-shown] { opacity: 1; }
-    .layer iframe { display: block; width: 100%; height: 100%; border: 0; }
-    .close { position: absolute; top: 12px; right: 12px; width: 34px; padding: 0; display: grid; place-items: center; background: #1b1b1b;
-      box-shadow: 0 0 0 1px #ffffff14, 0 6px 16px #00000040; color: #ededed; }
-    .close:hover:not(:disabled) { background: #2a2a2a; }
+    /* The viewer waits here, laid out but unseen, until it shows what was asked for. Not display:none, so it loads. */
+    .layer { position: fixed; inset: 0; z-index: 2147483647; opacity: 0; pointer-events: none; }
+    .layer[data-shown] { opacity: 1; pointer-events: auto; }
+    .layer iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    @media (prefers-reduced-motion: reduce) { .layer { transition: none; } .busy { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { button { transition: none; } .busy, button[aria-busy='true']::before { animation: none; } }
   `;
-  // The wipe mark from afterimage's own icon: the first version on the left, today's on the right.
-  const mark = '<svg width="18" height="18" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#ededed"/><path d="M7 0h9v32H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7z" fill="#8e8e8e"/><rect x="15" y="5" width="2" height="22" rx="1" fill="#1b1b1b"/></svg>';
-  const cross = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
   const host = document.createElement('afterimage-overlay');
   const root = host.attachShadow({ mode: 'open' });
@@ -119,7 +130,10 @@
   let view = 'idle';
   let message = '';
   let timer = 0;
-  let layer = null;
+  // The viewer, once the pill was pointed at: { el, frame, origin, versions, listening, asked, shown }.
+  // asked is { view, button } from a click until the viewer is ready.
+  let viewer = null;
+  let openTimer = 0;
   let returnFocus = null;
 
   const dock = make('div', { className: 'dock' });
@@ -136,15 +150,15 @@
     clearTimeout(timer);
     timer = setTimeout(next, ms);
   };
-  const button = (text, onClick, extra = {}) => {
-    const element = make('button', { type: 'button', textContent: text, ...extra });
+  const button = (content, onClick, extra = {}) => {
+    const element = make('button', { type: 'button', ...extra });
+    element.append(...[content].flat());
     element.addEventListener('click', onClick);
     return element;
   };
 
   function render() {
     pill.replaceChildren();
-    pill.insertAdjacentHTML('beforeend', `<span class="mark">${mark}</span>`);
     const versions = state.versions;
 
     if (view === 'naming') {
@@ -166,12 +180,26 @@
       return;
     }
 
-    const label = make('span', { className: 'label' });
-    if (versions) label.innerHTML = `<b>${state.latest.id}</b> · ${versions} ${versions === 1 ? 'version' : 'versions'}`;
-    else label.textContent = 'No versions yet';
-    pill.append(label, make('span', { className: 'sep' }));
-    if (versions) pill.append(button('History', open));
-    if (state.canSave) pill.append(button(versions ? 'Save' : 'Save first version', () => { view = 'naming'; render(); }, versions ? {} : { className: 'primary' }));
+    if (!versions) {
+      pill.append(make('span', { className: 'label', textContent: 'No versions yet' }));
+      if (state.canSave) pill.append(button('Save first version', () => { view = 'naming'; render(); }, { className: 'primary' }));
+      return;
+    }
+    // Version N of N opens the list of versions, as it does in the viewer. A first version has nothing to compare.
+    const number = Number(state.latest.id.slice(1)) || versions;
+    const single = versions < 2;
+    pill.append(
+      button([
+        make('span', { className: 'dot' }),
+        'Version',
+        make('span', { className: 'field num', textContent: String(number) }),
+        make('span', { className: 'of', innerHTML: `of<span class="num">${versions}</span>` }),
+      ], event => open('versions', event), { ariaLabel: `Version ${number} of ${versions}, latest. Show versions` }),
+      make('span', { className: 'sep' }),
+      button('Highlight', event => open('highlight', event), { disabled: single, ariaLabel: single ? 'Highlight changes, not available on the first version' : 'Highlight changes' }),
+      button('Compare', event => open('compare', event), { disabled: single }),
+    );
+    if (state.canSave) pill.append(make('span', { className: 'sep' }), button('Save', () => { view = 'naming'; render(); }));
   }
 
   function back() {
@@ -206,42 +234,97 @@
     later(back, 2400);
   }
 
-  function open(event) {
-    if (layer) return;
-    returnFocus = event?.currentTarget ?? null;
-    layer = make('div', { className: 'layer' });
-    layer.setAttribute('role', 'dialog');
-    layer.setAttribute('aria-modal', 'true');
-    layer.setAttribute('aria-label', 'Version history');
-    const frame = make('iframe', { src: `${state.base}/afterimage/`, title: 'Version history' });
-    const closer = button('', close, { className: 'close', ariaLabel: 'Close history' });
-    closer.innerHTML = cross;
-    layer.append(frame, closer);
-    root.append(layer);
-    dock.hidden = true;
-    document.documentElement.style.setProperty('overflow', 'hidden');
-    requestAnimationFrame(() => layer?.setAttribute('data-shown', ''));
-    frame.addEventListener('load', () => frame.focus(), { once: true });
-    closer.focus();
+  // Loads the viewer behind the page, on the page's route, so a click finds it ready. A save since then made a version
+  // the loaded viewer doesn't know, so that one is replaced.
+  function prepare() {
+    if (!state?.versions || viewer?.shown || viewer?.asked) return;
+    if (viewer && viewer.versions === state.versions) return;
+    viewer?.el.remove();
+    const el = make('div', { className: 'layer' });
+    el.inert = true;
+    el.setAttribute('aria-hidden', 'true');
+    const frame = make('iframe', { src: `${state.base}/afterimage/${location.hash}`, title: 'Version history', tabIndex: -1 });
+    el.append(frame);
+    root.append(el);
+    viewer = { el, frame, origin: new URL(state.base).origin, versions: state.versions, listening: false, asked: null, shown: false };
   }
 
-  function close() {
-    if (!layer) return;
-    layer.remove();
-    layer = null;
+  // A click can come before the viewer has started; then it is asked as soon as it says it is listening.
+  function ask() {
+    if (!viewer?.listening || !viewer.asked) return;
+    viewer.frame.contentWindow.postMessage({ type: 'afterimage:open', view: viewer.asked.view, route: location.hash, scrollY: window.scrollY }, viewer.origin);
+  }
+
+  function open(name, event) {
+    if (viewer?.shown || viewer?.asked) return;
+    prepare();
+    const pressed = event?.currentTarget ?? null;
+    returnFocus = pressed;
+    pressed?.setAttribute('aria-busy', 'true');
+    viewer.asked = { view: name, button: pressed };
+    ask();
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => {
+      // The viewer never got there (the helper stopped, say): start from scratch next time.
+      viewer?.el.remove();
+      viewer = null;
+      view = 'failed';
+      message = "Couldn't open the history. Is afterimage dev still running?";
+      render();
+      say(message);
+      later(back, 6000);
+    }, OPEN_TIMEOUT_MS);
+  }
+
+  function show() {
+    if (!viewer?.asked) return;
+    clearTimeout(openTimer);
+    viewer.asked.button?.removeAttribute('aria-busy');
+    viewer.asked = null;
+    viewer.shown = true;
+    const { el } = viewer;
+    el.inert = false;
+    el.removeAttribute('aria-hidden');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-label', 'Version history');
+    el.setAttribute('data-shown', '');
+    dock.hidden = true;
+    document.documentElement.style.setProperty('overflow', 'hidden');
+    viewer.frame.focus();
+  }
+
+  // The viewer stays loaded for next time. The page takes the route and scroll the visitor left the viewer on.
+  function hide({ route, scrollY } = {}) {
+    if (!viewer?.shown) return;
+    viewer.shown = false;
+    const { el } = viewer;
+    el.removeAttribute('data-shown');
+    el.removeAttribute('role');
+    el.removeAttribute('aria-modal');
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true;
     dock.hidden = false;
     document.documentElement.style.removeProperty('overflow');
-    returnFocus?.focus?.();
+    if (typeof route === 'string' && route !== location.hash && (route || location.hash)) location.hash = route;
+    if (typeof scrollY === 'number') requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)));
+    returnFocus?.focus?.({ preventScroll: true });
     // A save the agent made from the terminal meanwhile shows up in the count.
     refresh();
   }
 
   window.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && layer) close();
+    if (event.key === 'Escape' && viewer?.shown) hide();
   });
   window.addEventListener('message', event => {
-    if (layer && event.origin === new URL(state.base).origin && event.data?.type === 'afterimage:close') close();
+    if (!viewer || event.source !== viewer.frame.contentWindow || event.origin !== viewer.origin) return;
+    const type = event.data?.type;
+    if (type === 'afterimage:listening') { viewer.listening = true; ask(); }
+    if (type === 'afterimage:ready') show();
+    if (type === 'afterimage:close') hide(event.data);
   });
+  pill.addEventListener('pointerenter', prepare);
+  pill.addEventListener('focusin', prepare);
 
   async function refresh() {
     if (!state || view !== 'idle') return;

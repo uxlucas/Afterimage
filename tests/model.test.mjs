@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, reducer, comparisonBase, clampChange } from '../src/viewer/state/model.js';
+import { initialState, reducer, comparisonBase, clampChange, showsLivePage } from '../src/viewer/state/model.js';
 
 function makeVersions(count) {
   const list = [];
@@ -319,4 +319,46 @@ test('toggleRetracted puts the pill away and brings it back', () => {
   const away = run(start(), { type: 'toggleRetracted' });
   assert.equal(away.retracted, true);
   assert.equal(run(away, { type: 'toggleRetracted' }).retracted, false);
+});
+
+// The viewer framed over a live prototype: the page's own pill opens it in one state, and leaving every state the
+// page can't show (an older version, compare, highlights, the panel) hands the page back.
+test('openFromPage opens straight into what the page pill asked for, from wherever the viewer was left', () => {
+  const messy = { ...start(), versionId: 'v2', mode: 'compare', baseId: 'v1', changeIndex: 3, peek: true, retracted: true, panelOpen: true };
+  const highlight = run(messy, { type: 'openFromPage', view: 'highlight' });
+  assert.equal(highlight.versionId, 'v5');
+  assert.equal(highlight.mode, 'explore');
+  assert.equal(highlight.baseId, null);
+  assert.equal(highlight.highlights, true);
+  assert.equal(highlight.panelOpen, false);
+  assert.equal(highlight.changeIndex, null);
+  assert.equal(highlight.peek, false);
+  assert.equal(highlight.retracted, false);
+
+  const compare = run(start(), { type: 'openFromPage', view: 'compare' });
+  assert.equal(compare.mode, 'compare');
+  assert.equal(compare.baseId, 'v4');
+  assert.equal(compare.highlights, false);
+
+  const list = run({ ...start(), highlights: true }, { type: 'openFromPage', view: 'versions' });
+  assert.equal(list.panelOpen, true);
+  assert.equal(list.folders.versions, true);
+  assert.equal(list.highlights, false);
+});
+
+test('openFromPage on a single version has nothing to compare, so it opens the version list instead', () => {
+  const one = makeVersions(1);
+  const state = reducer(one)(initialState(one, ''), { type: 'openFromPage', view: 'compare' });
+  assert.equal(state.mode, 'explore');
+  assert.equal(state.panelOpen, true);
+});
+
+test('showsLivePage is true only for the latest version with nothing on top', () => {
+  assert.equal(showsLivePage(start(), versions), true);
+  assert.equal(showsLivePage({ ...start(), highlights: true }, versions), false);
+  assert.equal(showsLivePage({ ...start(), panelOpen: true }, versions), false);
+  assert.equal(showsLivePage(run(start(), { type: 'setMode', mode: 'compare' }), versions), false);
+  assert.equal(showsLivePage(run(start(), { type: 'selectVersion', id: 'v3' }), versions), false);
+  // A layout, zoom or filter choice is remembered for next time, not a reason to stay.
+  assert.equal(showsLivePage({ ...start(), layout: 'side', changeFilter: 'added' }, versions), true);
 });
