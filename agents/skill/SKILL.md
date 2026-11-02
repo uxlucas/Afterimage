@@ -19,7 +19,7 @@ When the user asks to add Afterimage, or to track the prototype's versions, do a
 4. Init puts the pill on plain HTML pages and in a Vite app's `index.html` itself. For Next.js, Astro and SvelteKit it prints a note that starts with `Add the Afterimage pill to your app`. Make that change yourself, exactly as the note says.
 5. Unless `afterimage/versions.json` already lists a version, run `npx afterimage save "First version"`.
 6. Start `npm run dev` as a background process. If you started the project's dev server earlier in this session, stop that one first: this is the same server, with Afterimage beside it. Wait for the line that starts with `Afterimage is running at`.
-7. Tell the user where the prototype is running and that the pill at its bottom right saves a version and shows them all. The address is the app dev server's own (such as Vite's `Local:` line), or the one after `Your prototype is at` for plain HTML.
+7. Tell the user where the prototype is running and that the pill at its bottom saves a version and shows them all. The address is the app dev server's own (such as Vite's `Local:` line), or the one after `Your prototype is at` for plain HTML.
 
 ## Commands
 
