@@ -1,5 +1,6 @@
 // Highlights drawn into a prototype's own document. Plain DOM on purpose: the overlay lives inside
-// the iframe, outside React. Positions are page coordinates, so scrolling never needs a redraw.
+// the iframe, outside React. Positions are page coordinates, so scrolling the page never needs a redraw; scrolling a
+// panel inside it (an app shell that keeps the page still) does, and the outlines in it follow.
 
 const RGB = { changed: '229 168 59', added: '111 191 115', removed: '224 112 95' };
 const color = kind => `rgb(${RGB[kind] ?? RGB.changed})`;
@@ -58,6 +59,63 @@ function ensureOverlay(doc) {
   return overlay;
 }
 
+// The panels around an element that cut off what overflows them: a scrolling list, a card with overflow hidden.
+// Worked out once per element; scrolling doesn't change which they are.
+const clippersOf = new WeakMap();
+function clippers(element, win) {
+  let list = clippersOf.get(element);
+  if (!list) {
+    list = [];
+    for (let parent = element.parentElement; parent && parent.tagName !== 'BODY' && parent.tagName !== 'HTML'; parent = parent.parentElement) {
+      const style = win.getComputedStyle(parent);
+      if (style.overflowX !== 'visible' || style.overflowY !== 'visible') list.push(parent);
+    }
+    clippersOf.set(element, list);
+  }
+  return list;
+}
+
+const pageBox = (r, win) => ({ x: r.left + win.scrollX, y: r.top + win.scrollY, width: r.width, height: r.height });
+function intersect(a, b) {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  return { x, y, width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x), height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y) };
+}
+
+// Where a region shows now, in page coordinates, read from its element: in an app that scrolls a panel instead of the
+// page, the captured place (which ignores that scroll, so scrolling is never a change) is not where it shows.
+// clip is the part of the page its panels let show, or null when nothing cuts it off. A region whose element is
+// gone (the page was redrawn) keeps its captured place. Pure apart from the reads, for node:test.
+export function placeRegion(region, win) {
+  const element = region.element;
+  if (region.page || !element?.isConnected) return { rect: region.rect, clip: null };
+  const rect = pageBox(element.getBoundingClientRect(), win);
+  let clip = null;
+  for (const panel of clippers(element, win)) {
+    const box = pageBox(panel.getBoundingClientRect(), win);
+    clip = clip ? intersect(clip, box) : box;
+  }
+  return { rect, clip };
+}
+
+// How to bring an element to the middle of what shows: each panel that scrolls it, innermost first, then the page.
+// Each step counts the ones before it, so the plan can be carried out at once, even with smooth scrolling.
+// Returns [{ target: panel | win, top }].
+export function revealPlan(element, win) {
+  const plan = [];
+  const { top: startTop, height } = element.getBoundingClientRect();
+  let top = startTop; // where the element will be on screen, once the panels so far have scrolled
+  for (const panel of clippers(element, win)) {
+    if (!/^(auto|scroll|overlay)$/.test(win.getComputedStyle(panel).overflowY) || panel.scrollHeight <= panel.clientHeight) continue;
+    const box = panel.getBoundingClientRect();
+    const offset = Math.max(24, (panel.clientHeight - height) / 2);
+    const goal = Math.max(0, Math.min(panel.scrollTop + top - box.top - offset, panel.scrollHeight - panel.clientHeight));
+    top -= goal - panel.scrollTop;
+    plan.push({ target: panel, top: goal });
+  }
+  plan.push({ target: win, top: Math.max(0, win.scrollY + top - Math.max(24, (win.innerHeight - height) / 2)) });
+  return plan;
+}
+
 // A region's box in page coordinates, kept far enough from the edges for its outline to show.
 function boxFor(region, clientWidth) {
   const edge = 5;
@@ -66,6 +124,18 @@ function boxFor(region, clientWidth) {
   const right = Math.min(x + width, clientWidth - edge);
   const top = Math.max(y, edge);
   return { left, top, width: Math.max(0, right - left), height: Math.max(0, height - (top - y)) };
+}
+
+// A region in a panel shows only as far as the panel does. The sides the panel cuts are cut there; the others keep
+// room for the outline, its ring and the badge. A region scrolled out of its panel doesn't show at all.
+function clipFor(box, clip, zoom) {
+  if (!clip) return '';
+  const room = -24 * zoom;
+  const top = clip.y - box.top, left = clip.x - box.left;
+  const bottom = box.top + box.height - (clip.y + clip.height), right = box.left + box.width - (clip.x + clip.width);
+  if (top >= box.height || bottom >= box.height || left >= box.width || right >= box.width) return 'display:none;'; // not visibility: the badge resets its own (all:initial)
+  const side = value => (value > 0 ? `${value}px` : `${room}px`);
+  return `clip-path:inset(${side(top)} ${side(right)} ${side(bottom)} ${side(left)});`;
 }
 
 // `zoom` undoes a scale the frame is shown at (side by side shows it at about half size), so outlines,
@@ -81,7 +151,7 @@ function paintBox(doc, overlay, region, { number, active, dimmed, onPick, isNew,
     : (({ left, top, width, height }) => `position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;outline-offset:${3 * zoom}px;`)(boxFor(region, doc.documentElement.clientWidth));
   const lineWidth = (active ? 2 : 1.5) * zoom;
   box.style.cssText = reset
-    + `display:block;${geometry}border-radius:${4 * zoom}px;pointer-events:none;`
+    + `display:block;${geometry}${page ? '' : clipFor(boxFor(region, doc.documentElement.clientWidth), region.clip, zoom)}border-radius:${4 * zoom}px;pointer-events:none;`
     + `outline:${lineWidth}px ${region.kind === 'removed' ? 'dashed' : 'solid'} ${color(region.kind)};`
     + `box-shadow:${active ? `0 0 0 ${6 * zoom}px ${ring(region.kind)}` : '0 0 0 0 transparent'};`
     + `opacity:${dimmed ? '.5' : '1'};`
@@ -223,7 +293,10 @@ function paintCard(doc, overlay, spec, region, zoom) {
     + `scale:${zoom};transform-origin:0 0;`;
   fillCard(doc, card, spec);
   if (!card.isConnected) overlay.append(card);
-  placeCard(doc, card, region, zoom, spec.bounds ?? null);
+  // Beside the part of the region its panels let show; none of it showing, no card.
+  const shown = region.clip ? { ...region, rect: intersect(region.rect, region.clip) } : region;
+  if (!region.page && (shown.rect.width === 0 || shown.rect.height === 0)) card.style.display = 'none';
+  placeCard(doc, card, shown, zoom, spec.bounds ?? null);
   if (isNew && !reducedMotion()) {
     card.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: ENTER_MS, easing: ENTER });
   }
@@ -277,12 +350,28 @@ export function bindClearOnClick(doc, activeKey, onClear, zoom = 1) {
 // regions: [{ key, kind: 'changed' | 'added' | 'removed', rect: { x, y, width, height }, page? }]
 // numbers: Map<key, number>. card: { key, kindLabel, position: { n, total }, detail: [{ label, before, after, color? }] } | null
 // zoom: 1 / the scale the frame is shown at (1 unless the frame is scaled down, as side by side does).
-export function drawOverlay(doc, regions, { activeKey = null, numbers = new Map(), onPick, card = null, zoom = 1 } = {}) {
+// A region with its element (the capture's) follows that element; see placeRegion.
+export function drawOverlay(doc, regions, options = {}) {
+  const { activeKey = null, numbers = new Map(), onPick, card = null, zoom = 1 } = options;
   if (!doc?.documentElement || !regions.length) { clearOverlay(doc); return; }
   const overlay = ensureOverlay(doc);
+  const win = doc.defaultView;
+  // Exactly as big as the page without it, and clipped there: an outline in a panel, past the panel's end, must not
+  // make the page itself scroll. A redraw for a panel's scroll leaves the size alone.
+  if (!options.scrolled) {
+    overlay.style.display = 'none';
+    const width = doc.documentElement.scrollWidth, height = doc.documentElement.scrollHeight;
+    overlay.style.display = 'block';
+    overlay.style.width = `${width}px`;
+    overlay.style.height = `${height}px`;
+    overlay.style.overflow = 'clip';
+  }
+  overlay.redraw = () => drawOverlay(doc, regions, { ...options, scrolled: true });
+  followPanels(doc);
   const present = new Set();
   const known = new Set([...overlay.querySelectorAll(':scope > [data-change]')].map(box => box.dataset.key));
-  for (const region of regions) {
+  for (const listed of regions) {
+    const region = { ...listed, ...placeRegion(listed, win) };
     present.add(region.key);
     paintBox(doc, overlay, region, {
       number: numbers.get(region.key),
@@ -296,5 +385,22 @@ export function drawOverlay(doc, regions, { activeKey = null, numbers = new Map(
   for (const box of [...overlay.querySelectorAll(':scope > [data-change]')]) {
     if (!present.has(box.dataset.key)) leave(box);
   }
-  paintCard(doc, overlay, card, card && regions.find(region => region.key === card.key), zoom);
+  const carded = card && regions.find(region => region.key === card.key);
+  paintCard(doc, overlay, card, carded && { ...carded, ...placeRegion(carded, win) }, zoom);
+}
+
+// One listener per document: a panel that scrolls (not the page, whose scroll moves the page coordinates along) redraws
+// the outlines once per frame.
+function followPanels(doc) {
+  if (doc.afterimageFollowsPanels) return;
+  doc.afterimageFollowsPanels = true;
+  let frame = 0;
+  doc.addEventListener('scroll', event => {
+    if (event.target === doc || frame) return;
+    frame = doc.defaultView.requestAnimationFrame(() => {
+      frame = 0;
+      const overlay = doc.querySelector('[data-afterimage-overlay]');
+      overlay?.redraw?.();
+    });
+  }, { capture: true, passive: true });
 }

@@ -66,10 +66,27 @@ function keyFor(element, keys) {
   return key;
 }
 
+// How far the panels around an element are scrolled. Many apps keep the page still and scroll a panel inside it; a
+// position with this added is where the element sits in the panel's content, the same at any scroll, so scrolling a
+// panel is never a change. The page's own scroll is the window's and is added separately. `cache` holds each
+// ancestor's sum, so a capture works it out once per panel.
+export function scrollOffset(element, cache = new Map()) {
+  const parent = element.parentElement;
+  if (!parent || parent.tagName === 'BODY' || parent.tagName === 'HTML') return { x: 0, y: 0 };
+  let offset = cache.get(parent);
+  if (!offset) {
+    const outer = scrollOffset(parent, cache);
+    offset = { x: outer.x + parent.scrollLeft, y: outer.y + parent.scrollTop };
+    cache.set(parent, offset);
+  }
+  return offset;
+}
+
 export function captureDocument(doc) {
   const view = doc.defaultView;
   const records = [];
   const keys = new Map();
+  const scrolled = new Map();
   for (const element of doc.body.querySelectorAll('*')) {
     if (element.closest('[data-afterimage-overlay],script,style,noscript,svg') && element.tagName.toLowerCase() !== 'svg') continue;
     if (element.matches('main,form,br,meta,link')) continue;
@@ -80,6 +97,7 @@ export function captureDocument(doc) {
     const visualBox = style.backgroundColor !== 'rgba(0, 0, 0, 0)' || parseFloat(style.borderTopWidth) > 0;
     if (!text && !ownId(element) && !stableId(element) && !visualBox && !element.matches('input,textarea,select,button,img,svg,video,canvas')) continue;
     const ancestors = [];
+    const shift = scrollOffset(element, scrolled);
     for (let parent = element.parentElement; parent && parent !== doc.documentElement; parent = parent.parentElement) ancestors.push(keyFor(parent, keys));
     const attributes = ['src', 'alt', 'href', 'type', 'placeholder', 'aria-label'].map(name => [name, normalizeAsset(name === 'href' ? ownValue(element.getAttribute(name) || '') : element.getAttribute(name) || '')]);
     if (element.tagName.toLowerCase() === 'svg') attributes.push(['drawing', drawingOf(element)]);
@@ -89,7 +107,7 @@ export function captureDocument(doc) {
     }
     records.push({ key: keyFor(element, keys), ancestors, element, text, label: labelFor(element), content: normalize(element.innerText || element.getAttribute('placeholder') || element.getAttribute('alt') || ''), attrs: Object.fromEntries(attributes), attributes: JSON.stringify(attributes), styles,
       style: JSON.stringify(styles),
-      rect: { x: rect.left + view.scrollX, y: rect.top + view.scrollY, width: rect.width, height: rect.height } });
+      rect: { x: rect.left + view.scrollX + shift.x, y: rect.top + view.scrollY + shift.y, width: rect.width, height: rect.height } });
   }
   const bodyStyle = view.getComputedStyle(doc.body);
   const styles = Object.fromEntries(['backgroundColor', 'backgroundImage'].map(name => [name, normalizeAsset(bodyStyle[name])]));

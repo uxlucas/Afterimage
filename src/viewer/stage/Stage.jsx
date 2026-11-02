@@ -8,7 +8,7 @@ import Divider from './Divider.jsx';
 import { CompareLabel, PanBar, SideTools } from './CompareChrome.jsx';
 import { clampPan, panForZoom, panToShow, sideScale, stepZoom } from './zoom.js';
 import { linkScroll } from './scrollSync.js';
-import { bindClearOnClick, clearOverlay, drawOverlay, scrollBehavior } from './overlay.js';
+import { bindClearOnClick, clearOverlay, drawOverlay, revealPlan, scrollBehavior } from './overlay.js';
 import { visibleRange, wipeToShow } from './wipe.js';
 import { frameWindow, quietly, showsVersion as shows } from '../frames.js';
 import './stage.css';
@@ -291,7 +291,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
         bounds: boundsMin === null ? null : { min: boundsMin, max: boundsMax },
       };
     };
-    const regions = list => (list ?? []).filter(region => keys.has(region.key)).map(({ key, kind, rect, page }) => ({ key, kind, rect, page }));
+    const regions = list => (list ?? []).filter(region => keys.has(region.key)).map(({ key, kind, rect, page, element }) => ({ key, kind, rect, page, element }));
 
     const draw = () => {
       for (const [index, [frame, version]] of frames.entries()) {
@@ -371,8 +371,15 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
     if (!record) return;
     scrolledFor.current = token;
     const win = frameWindow(frame);
+    if (record.page) { win.scrollTo({ top: 0, behavior: scrollBehavior() }); return; }
+    // Through the panels that scroll it, in an app that scrolls a panel instead of the page. A record whose element
+    // is gone falls back to its captured place.
+    if (record.element?.isConnected) {
+      for (const { target, top } of revealPlan(record.element, win)) target.scrollTo({ top, behavior: scrollBehavior() });
+      return;
+    }
     const offset = Math.max(24, (win.innerHeight - record.rect.height) / 2);
-    win.scrollTo({ top: record.page ? 0 : Math.max(0, record.rect.y - offset), behavior: scrollBehavior() });
+    win.scrollTo({ top: Math.max(0, record.rect.y - offset), behavior: scrollBehavior() });
   }, [active, comparison, target, base, removedActive, state.changeFilter, state.pick, baseRef, targetRef]);
 
   const enter = { duration: reduced ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] };

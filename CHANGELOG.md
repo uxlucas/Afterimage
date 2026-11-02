@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- **Apps that scroll a panel instead of the page.** Many app shells keep the page still and scroll the content inside it. There, outlines stayed where they were drawn while the content scrolled away under them, and stepping to a change scrolled nothing. Now outlines follow their elements as the panel scrolls and stop at its edges, and stepping scrolls each panel that holds the change, so it lands in the middle. Outlines also no longer make a page like that scroll on its own.
+- **Scrolling a panel is never a change.** Positions are recorded as if every panel were scrolled to the top, so two versions scrolled differently still match.
+
 ## 0.2.1
 
 - **The pill is the viewer's own bar.** It sits at the bottom of the page and reads Version N of N, Highlight, Compare and Save. Each one opens the viewer straight in that state, on the page and scroll you are on, so Highlight looks like the outlines switching on in place. There is no History step and no close button: turn Highlight off, leave Compare or close the list (or press Esc) and you are back on the live page, on the route you left the viewer on.
