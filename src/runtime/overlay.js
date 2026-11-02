@@ -39,6 +39,7 @@
   const inDev = local && (scriptTag ? servedByDev : mode !== 'production');
   const helperPorts = Array.from({ length: 10 }, (_, i) => 4321 + i);
   const OPEN_TIMEOUT_MS = 12000;
+  const LAYER_FADE_MS = 140; // .layer's fade in; the page's pill stays up under it until it's done
 
   const getJson = async (url, timeout = 1500) => {
     try {
@@ -115,11 +116,12 @@
       vertical-align: 1px; animation: pulse 1s ease-in-out infinite alternate; }
     @keyframes pulse { from { opacity: 0.35; } to { opacity: 1; } }
     /* The viewer waits here, laid out but unseen, until it shows what was asked for. Not display:none, so it loads. */
-    .layer { position: fixed; inset: 0; z-index: 2147483647; opacity: 0; pointer-events: none; }
-    .layer[data-shown] { opacity: 1; pointer-events: auto; }
+    /* Under the pill the two are the same picture, so the short fade only blends the page's pill into the viewer's. */
+    .layer { position: fixed; inset: 0; z-index: 2147483647; opacity: 0; pointer-events: none; transition: opacity 110ms cubic-bezier(0.22, 1, 0.36, 1); }
+    .layer[data-shown] { opacity: 1; pointer-events: auto; transition-duration: 140ms; }
     .layer iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    @media (prefers-reduced-motion: reduce) { button { transition: none; } .busy, button[aria-busy='true']::before { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { button, .layer { transition: none; } .busy, button[aria-busy='true']::before { animation: none; } }
   `;
 
   const host = document.createElement('afterimage-overlay');
@@ -249,10 +251,21 @@
     viewer = { el, frame, origin: new URL(state.base).origin, versions: state.versions, listening: false, asked: null, shown: false };
   }
 
+  // The panels that scroll on this page (an app shell's content), in page order, and where each is. The viewer reads
+  // its frame the same way (stage/scrollSync.js), so the two open and close on the same rows.
+  const scrollingPanels = () => [...document.querySelectorAll('*')].filter(element => element.scrollHeight > element.clientHeight
+    && /^(auto|scroll|overlay)$/.test(getComputedStyle(element).overflowY));
+  const panelTops = () => scrollingPanels().map(panel => Math.round(panel.scrollTop));
+  function setPanelTops(tops) {
+    if (!Array.isArray(tops)) return;
+    scrollingPanels().forEach((panel, index) => { if (Number.isFinite(tops[index])) panel.scrollTop = tops[index]; });
+  }
+  const afterFrames = (count, fn) => requestAnimationFrame(() => (count > 1 ? afterFrames(count - 1, fn) : fn()));
+
   // A click can come before the viewer has started; then it is asked as soon as it says it is listening.
   function ask() {
     if (!viewer?.listening || !viewer.asked) return;
-    viewer.frame.contentWindow.postMessage({ type: 'afterimage:open', view: viewer.asked.view, route: location.hash, scrollY: window.scrollY }, viewer.origin);
+    viewer.frame.contentWindow.postMessage({ type: 'afterimage:open', view: viewer.asked.view, route: location.hash, scrollY: window.scrollY, panels: panelTops() }, viewer.origin);
   }
 
   function open(name, event) {
@@ -289,28 +302,44 @@
     el.setAttribute('aria-modal', 'true');
     el.setAttribute('aria-label', 'Version history');
     el.setAttribute('data-shown', '');
-    dock.hidden = true;
-    document.documentElement.style.setProperty('overflow', 'hidden');
+    const fade = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : LAYER_FADE_MS;
     viewer.frame.focus();
+    // Once the swap is done, the viewer moves into what was asked for, where it can be seen doing it. One thing at
+    // a time: the two pills blend in place first, then the viewer's changes shape.
+    const { frame, origin } = viewer;
+    afterFrames(1, () => setTimeout(() => {
+      if (!viewer?.shown) return;
+      dock.hidden = true;
+      // Only now, under an opaque viewer: dropping the page's scrollbar moves its layout.
+      document.documentElement.style.setProperty('overflow', 'hidden');
+      frame.contentWindow?.postMessage({ type: 'afterimage:shown' }, origin);
+    }, fade));
   }
 
-  // The viewer stays loaded for next time. The page takes the route and scroll the visitor left the viewer on.
-  function hide({ route, scrollY } = {}) {
+  // The viewer stays loaded for next time. The page takes the route and scroll the visitor left the viewer on, and
+  // settles there under the viewer; then the viewer goes. The two look the same by then, so the swap doesn't show.
+  function hide({ route, scrollY, panels } = {}) {
     if (!viewer?.shown) return;
     viewer.shown = false;
     const { el } = viewer;
-    el.removeAttribute('data-shown');
-    el.removeAttribute('role');
-    el.removeAttribute('aria-modal');
-    el.setAttribute('aria-hidden', 'true');
     el.inert = true;
-    dock.hidden = false;
     document.documentElement.style.removeProperty('overflow');
     if (typeof route === 'string' && route !== location.hash && (route || location.hash)) location.hash = route;
-    if (typeof scrollY === 'number') requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, scrollY)));
-    returnFocus?.focus?.({ preventScroll: true });
-    // A save the agent made from the terminal meanwhile shows up in the count.
-    refresh();
+    afterFrames(2, () => {
+      if (typeof scrollY === 'number') window.scrollTo(0, scrollY);
+      setPanelTops(panels);
+      afterFrames(1, () => {
+        if (viewer?.shown) return; // opened again meanwhile
+        el.removeAttribute('data-shown');
+        el.removeAttribute('role');
+        el.removeAttribute('aria-modal');
+        el.setAttribute('aria-hidden', 'true');
+        dock.hidden = false;
+        returnFocus?.focus?.({ preventScroll: true });
+        // A save the agent made from the terminal meanwhile shows up in the count.
+        refresh();
+      });
+    });
   }
 
   window.addEventListener('keydown', event => {

@@ -6,6 +6,7 @@ import VersionField from './VersionField.jsx';
 import TickStrip from './TickStrip.jsx';
 import HighlightSegment from './HighlightSegment.jsx';
 import LayoutToggle from './LayoutToggle.jsx';
+import AutoWidth from './AutoWidth.jsx';
 import { framed } from '../hooks/usePageHost.js';
 import './pill.css';
 
@@ -138,6 +139,10 @@ export default function Pill({ state, dispatch, versions, review, phone, onOpenP
 
   return (
     <div className="pill" role="group" aria-label="Version history" data-compare={comparing || undefined}>
+      {/* Entering or leaving Compare, the segments that swap glide to their new width and their content fades in, so
+          the pill grows into its new shape instead of jumping to it. */}
+      <AutoWidth className="pill-morph">
+      <motion.div key={comparing ? 'compare' : 'single'} className="morph-content" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: t.enter }}>
       {versionSegment ?? (phone ? (
         <div className="pill-seg version-seg">
           <button
@@ -169,6 +174,8 @@ export default function Pill({ state, dispatch, versions, review, phone, onOpenP
           <label className="version-of" htmlFor={inputId}>of <span className="num">{total}</span></label>
         </div>
       ))}
+      </motion.div>
+      </AutoWidth>
 
       {!phone && <TickStrip versions={versions} state={state} dispatch={dispatch} />}
 
@@ -176,6 +183,7 @@ export default function Pill({ state, dispatch, versions, review, phone, onOpenP
 
       <HighlightSegment state={state} dispatch={dispatch} review={review} disabled={first} phone={phone} />
 
+      <AutoWidth className="pill-morph">
       {comparing ? (
         <motion.div className="pill-seg compare-seg" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: t.enter }}>
           {!phone && <LayoutToggle layout={state.layout} dispatch={dispatch} />}
@@ -221,6 +229,7 @@ export default function Pill({ state, dispatch, versions, review, phone, onOpenP
           </motion.button>
         </div>
       )}
+      </AutoWidth>
 
       {/* Over a live page, turning everything off is what puts the viewer away. */}
       {!framed && (

@@ -218,6 +218,8 @@
 /* Highlight */
 .highlight-seg { overflow: hidden; background-color: transparent; transition: background-color 150ms ease; }
 .highlight-seg[data-on] { background-color: var(--raised); }
+.pill-morph { flex: none; border-radius: 999px; }
+.morph-content { display: flex; align-items: center; }
 .auto-width-inner { position: relative; display: flex; align-items: center; width: max-content; height: 34px; }
 .seg-content { display: flex; align-items: center; height: 34px; }
 

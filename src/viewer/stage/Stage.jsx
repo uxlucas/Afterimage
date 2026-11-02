@@ -7,7 +7,8 @@ import Frame from './Frame.jsx';
 import Divider from './Divider.jsx';
 import { CompareLabel, PanBar, SideTools } from './CompareChrome.jsx';
 import { clampPan, panForZoom, panToShow, sideScale, stepZoom } from './zoom.js';
-import { linkScroll } from './scrollSync.js';
+import { levelPanels, linkScroll } from './scrollSync.js';
+import { holdWork } from '../motionHold.js';
 import { bindClearOnClick, clearOverlay, drawOverlay, revealPlan, scrollBehavior } from './overlay.js';
 import { visibleRange, wipeToShow } from './wipe.js';
 import { frameWindow, quietly, showsVersion as shows } from '../frames.js';
@@ -117,6 +118,21 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   const gliding = switching || (layout === 'side' && shownZoom.current !== state.zoom) || glidePan.current;
   useEffect(() => { shownLayout.current = layout; shownZoom.current = state.zoom; glidePan.current = false; });
   const boxTransition = gliding ? t.layout : INSTANT;
+  // A review that starts now would freeze the glide halfway (motionHold.js), so it waits until the frames land.
+  useLayoutEffect(() => { if (gliding && t.layout.duration > 0) holdWork(t.layout.duration * 1000 + 60); });
+  // A frame's height is its viewport, so it never animates: a prototype laid out again on every frame stutters and
+  // shows blank. It takes the taller height for the whole glide (growing first, shrinking after), so a column never
+  // shows an empty strip.
+  const lastHeight = useRef({});
+  useEffect(() => { lastHeight.current = { base: boxes.base.box.height, target: boxes.target.box.height }; });
+  const boxTransitionFor = role => {
+    const from = lastHeight.current[role], to = boxes[role].box.height;
+    const shrinking = gliding && typeof from === 'number' && typeof to === 'number' && to < from;
+    return { ...boxTransition, height: { duration: 0, delay: shrinking ? boxTransition.duration ?? 0 : 0 } };
+  };
+  // While it glides, a frame is scaled as a picture (stage.css), not redrawn at every size on the way.
+  const gliders = useRef({});
+  const glidingAttr = (role, on) => () => { const box = gliders.current[role]; if (box) box.toggleAttribute('data-gliding', on); };
 
   // What the wheel and the pan bars need, current at the moment they fire.
   const live = useRef(null);
@@ -145,13 +161,32 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   const splitGoal = layout === 'wipe' && !state.peek ? wipe : 100;
   const splitAnimation = useRef(null);
   const glideSplit = useRef(false); // set when the divider moves itself to show a change
+  // Between the wipe and side by side, the Before frame's edge stays where the divider was while both frames slide
+  // into their columns: each half of the wipe becomes its column, and neither frame covers the other on the way.
+  // The base box's scale drives it (followScale); this holds the divider's place meanwhile, or null.
+  const splitFollows = useRef(null);
+  const dividerSplit = useTransform(split, value => splitFollows.current ?? value);
   useLayoutEffect(() => {
     splitAnimation.current?.stop();
     const glide = (switching || glideSplit.current) && t.layout.duration > 0;
     glideSplit.current = false;
+    const pair = [shownLayout.current, layout].sort().join();
+    splitFollows.current = glide && switching && pair === 'side,wipe' ? wipe : null;
+    if (splitFollows.current !== null) return;
     if (glide) splitAnimation.current = animate(split, splitGoal, t.layout);
     else split.jump(splitGoal);
   }, [splitGoal]); // eslint-disable-line react-hooks/exhaustive-deps
+  const followScale = latest => {
+    if (splitFollows.current !== null && typeof latest.scale === 'number' && latest.scale > 0) {
+      split.set(Math.min(100, splitFollows.current / latest.scale));
+    }
+  };
+  const keepInStep = () => {};
+  const landed = () => {
+    if (splitFollows.current === null) return;
+    splitFollows.current = null;
+    split.jump(splitGoal);
+  };
 
   // Where the card goes follows the divider once it is let go; while it is dragged the card holds still, so the
   // overlay isn't redrawn on every pointer move.
@@ -344,7 +379,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
     clearOverlay(baseRef.current?.contentDocument);
   }, [targetRef, baseRef]);
 
-  // The base frame appears in place: same scroll position as the target, put back when it hides again.
+  // The base frame appears in place: same scroll position as the target, page and panels, put back when it hides again.
   // Either frame may have gone cross-origin: then there is nothing to align, and nothing to put back.
   useLayoutEffect(() => {
     if (!peekInPlace) return undefined;
@@ -352,7 +387,9 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
     if (!baseWin || !targetWin) return undefined;
     const saved = baseWin.scrollY;
     alignScroll(baseWin, targetWin);
-    return () => quietly(() => baseWin.scrollTo({ top: saved, behavior: 'instant' }));
+    let restorePanels = () => {};
+    quietly(() => { restorePanels = levelPanels(targetWin.document, baseWin.document); });
+    return () => quietly(() => { restorePanels(); baseWin.scrollTo({ top: saved, behavior: 'instant' }); });
   }, [peekInPlace, baseRef, targetRef]);
 
   // Stepping to a change scrolls the frame that holds it so the region sits in the middle. An explicit pick
@@ -398,11 +435,17 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
   const frameBox = (role, children) => (
     <motion.div key={role} className="frame-col" data-role={role} initial={false} animate={boxes[role].col} transition={boxTransition}>
       <motion.div
+        ref={element => { gliders.current[role] = element; }}
         className="frame-box"
         style={{ width: size.width || '100%', clipPath: role === 'base' ? clipPath : undefined }}
         initial={false}
         animate={boxes[role].box}
-        transition={boxTransition}
+        transition={boxTransitionFor(role)}
+        onAnimationStart={glidingAttr(role, gliding)}
+        onAnimationComplete={() => { glidingAttr(role, false)(); if (role === 'base') landed(); }}
+        // Also keeps every part of the glide on one clock: without it the boxes' transforms could run on the compositor
+        // while the columns' sizes and the wipe's clip run here, and a busy frame would pull them apart.
+        onUpdate={role === 'base' ? followScale : keepInStep}
       >
         {children}
       </motion.div>
@@ -416,7 +459,7 @@ export default function Stage({ state, dispatch, versions, review, targetRef, ba
       {base && frameBox('base', <Frame frameRef={baseRef} version={base} role="base" compare={compare} visible={showBase} />)}
       <AnimatePresence>
         {layout === 'wipe' && (
-          <Divider key="divider" split={split} value={wipe} onChange={setWipe} onDragging={setDragging} stageRef={stageRef} stageWidth={size.width} beforeLabel={base.id} />
+          <Divider key="divider" split={dividerSplit} value={wipe} onChange={setWipe} onDragging={setDragging} stageRef={stageRef} stageWidth={size.width} beforeLabel={base.id} />
         )}
         {compare && <CompareLabel key="before" version={base} kind="Before" style={beforeStyle} />}
         {compare && !afterCovered && <CompareLabel key="after" version={target} kind="After" style={afterStyle} />}

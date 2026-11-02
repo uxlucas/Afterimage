@@ -4,6 +4,7 @@ import { filterEntries } from '../../engine/review.js';
 import { useTransitions } from '../motion.js';
 import { useReducedMotion } from '../hooks/useMedia.js';
 import { filterWord, stepperLabel } from './stepper.js';
+import AutoWidth from './AutoWidth.jsx';
 
 export function HighlightIcon() {
   return (
@@ -18,30 +19,6 @@ function Chevron({ direction }) {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={direction < 0 ? 'M9.5 4 5.5 8l4 4' : 'm6.5 4 4 4-4 4'} />
     </svg>
-  );
-}
-
-// Animates its own width to fit its content, so the segments beside it slide instead of jumping.
-function AutoWidth({ ref, className, children, ...rest }) {
-  const t = useTransitions();
-  const innerRef = useRef(null);
-  const [width, setWidth] = useState(null);
-  // Measure after every render, before paint, so a content swap and its width change start on the same frame.
-  // The observer catches changes that don't come from a render (fonts loading).
-  useLayoutEffect(() => {
-    const next = innerRef.current.offsetWidth;
-    setWidth(current => (current === next ? current : next));
-  });
-  useLayoutEffect(() => {
-    const inner = innerRef.current;
-    const observer = new ResizeObserver(() => setWidth(inner.offsetWidth));
-    observer.observe(inner);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <motion.div {...rest} ref={ref} className={className} initial={false} animate={{ width: width ?? 'auto' }} transition={t.layout}>
-      <div ref={innerRef} className="auto-width-inner">{children}</div>
-    </motion.div>
   );
 }
 

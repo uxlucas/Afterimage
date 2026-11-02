@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3
+
+- **Scroll sync covers panels.** In an app that scrolls a panel instead of the page, Scroll synced in side by side, the wipe and holding B only moved the page, which never scrolls, so the two versions drifted apart. Now each panel follows the same panel in the other version, even when the page around it changed between versions.
+- **Switching version crossfades in place.** The frame used to go dark, then blank, then draw the next version, and it jumped back to the top. Now the next version loads out of sight, lines up with where you were scrolled, page and panels, and fades in over the old one.
+- **Wipe and side by side glide into each other.** Each half of the wipe slides into its own column and back, without frames covering each other or going blank on the way. The change check that used to start mid-glide and freeze it now waits until the frames land.
+- **The pill hands over smoothly both ways.** Highlight and Compare now start on screen, after the viewer has taken the page's place, so the outlines fade in and the wipe sweeps in from the edge. Turning them off plays out before the page comes back, on the same route and scroll, panels included. The page's pill and the viewer's blend in place instead of swapping.
+- **The pill changes shape instead of jumping.** Entering or leaving Compare, its segments glide to their new width and their content fades in.
+
 ## 0.2.2
 
 - **Apps that scroll a panel instead of the page.** Many app shells keep the page still and scroll the content inside it. There, outlines stayed where they were drawn while the content scrolled away under them, and stepping to a change scrolled nothing. Now outlines follow their elements as the panel scrolls and stop at its edges, and stepping scrolls each panel that holds the change, so it lands in the middle. Outlines also no longer make a page like that scroll on its own.

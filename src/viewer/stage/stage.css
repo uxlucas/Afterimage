@@ -8,6 +8,10 @@
 .frame-box { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; pointer-events: none; }
 .stage .frame { position: absolute; inset: 0; pointer-events: auto; }
 .stage .frame[data-visible='false'] { visibility: hidden; }
+/* The next version fading in over a frame (Frame.jsx): a picture only. */
+.stage .frame-cover { opacity: 0; pointer-events: none; }
+/* While a frame glides between layouts it is scaled as a picture, so it never shows blank while it redraws. */
+.frame-box[data-gliding] { will-change: transform; }
 .stage[data-dragging] { cursor: ew-resize; }
 .stage[data-dragging] .frame { pointer-events: none; }
 

@@ -353,6 +353,17 @@ test('openFromPage on a single version has nothing to compare, so it opens the v
   assert.equal(state.panelOpen, true);
 });
 
+// The viewer first matches the live page exactly, so the page can swap itself for it unseen; the view asked for comes
+// after, where its transitions show.
+test('openFromPage with the page view looks like the live page, even on a first version', () => {
+  const messy = { ...start(), versionId: 'v2', mode: 'compare', baseId: 'v1', highlights: true, panelOpen: true, peek: true };
+  const page = run(messy, { type: 'openFromPage', view: 'page' });
+  assert.equal(showsLivePage(page, versions), true);
+  assert.equal(page.peek, false);
+  const one = makeVersions(1);
+  assert.equal(showsLivePage(reducer(one)(initialState(one, ''), { type: 'openFromPage', view: 'page' }), one), true);
+});
+
 test('showsLivePage is true only for the latest version with nothing on top', () => {
   assert.equal(showsLivePage(start(), versions), true);
   assert.equal(showsLivePage({ ...start(), highlights: true }, versions), false);

@@ -4,6 +4,7 @@ import { buildReview } from '../../engine/diff-records.js';
 import { acceptResult, createDebounce, createReviewTimer, reviewKey, reviewSignature, summarize } from '../../engine/review.js';
 import { writeCount } from '../../engine/review-cache.js';
 import { frameWindow, quietly, showsVersion } from '../frames.js';
+import { workHeldFor } from '../motionHold.js';
 
 const DEBOUNCE_MS = 80;
 const MAX_WAIT_MS = 500; // a page that never stops mutating (a JS animation) is still checked twice a second
@@ -60,9 +61,13 @@ export function useReview({ targetFrame, baseFrame, target, base, enabled }) {
       setState({ ...IDLE, status: 'failed' });
     }
 
+    let heldRun = 0;
     async function run() {
       const [targetEl, baseEl] = frames();
       if (!alive || !loaded()) return;
+      // The stage is mid-glide: capture once it lands, not halfway through it.
+      const held = workHeldFor();
+      if (held > 0) { clearTimeout(heldRun); heldRun = setTimeout(run, held); return; }
       const token = ++revision;
       try {
         const keyAtStart = currentKey();
@@ -132,6 +137,7 @@ export function useReview({ targetFrame, baseFrame, target, base, enabled }) {
 
     return () => {
       alive = false;
+      clearTimeout(heldRun);
       debounce.cancel();
       timer.cancel();
       teardown.forEach(stop => stop());

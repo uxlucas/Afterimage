@@ -72,9 +72,10 @@ export function showsLivePage(state, versions) {
 
 // The page pill's buttons: 'highlight', 'compare' or 'versions'. Whatever the viewer was left in, it opens on the
 // latest version in that one state. A first version has nothing to highlight or compare, so it shows the list.
+// 'page' is the live page itself, nothing on: what the viewer shows while the page swaps itself for it.
 function openFromPage(versions, state, view) {
   const base = previousVersion(versions, versions[0].id);
-  const shown = base ? view : 'versions';
+  const shown = base || view === 'page' ? view : 'versions';
   return {
     ...state,
     versionId: versions[0].id,
